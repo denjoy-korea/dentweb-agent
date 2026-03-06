@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.3.4"
+VERSION = "3.3.5"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -1021,8 +1021,8 @@ class TestWindow(ctk.CTkToplevel):
         runner._activate_dentweb(log_callback=log_cb)
         time.sleep(1)
 
-        # 3. 클릭
-        success = _find_and_click(step, log_callback=log_cb)
+        # 3. 클릭 (항상 activate_first=True — 테스트는 매번 포커스 확보 필요)
+        success = _find_and_click(step, log_callback=log_cb, activate_first=True)
 
         # 4. 3초 대기 (덴트웹 화면 전환 확인용)
         time.sleep(3)
