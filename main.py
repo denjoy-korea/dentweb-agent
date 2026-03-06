@@ -17,7 +17,7 @@ def main():
 
     # 서버 연결 확인
     try:
-        result = api.claim_run()
+        api.claim_run()
         log.info("서버 연결 성공")
     except Exception as e:
         log.error(f"서버 연결 실패: {e}")
@@ -27,9 +27,28 @@ def main():
         input("\nEnter를 누르면 종료합니다...")
         sys.exit(1)
 
+    # 클릭 좌표가 없으면 학습 모드 실행
+    if not runner.is_configured():
+        print()
+        print("[안내] 덴트웹 클릭 좌표가 설정되지 않았습니다.")
+        print("자동화를 위해 덴트웹 화면의 버튼 위치를 학습해야 합니다.")
+        print()
+        runner.teach()
+
     log.info("에이전트 시작 - 서버 폴링 중...")
-    print("에이전트가 실행 중입니다. 이 창을 닫지 마세요.")
-    print("중지하려면 Ctrl+C를 누르세요.\n")
+    print()
+    print("=" * 50)
+    print("  에이전트가 실행 중입니다")
+    print("  이 창을 닫지 마세요")
+    print("=" * 50)
+    print()
+    print("  서버에서 실행 요청을 대기 중입니다...")
+    print("  앱에서 '지금 실행 요청' 버튼을 누르면 자동으로 시작됩니다.")
+    print()
+    print("  [단축키]")
+    print("  Ctrl+C  = 에이전트 종료")
+    print("  좌표 재설정 = config.json 옆의 dentweb_steps.json 삭제 후 재시작")
+    print()
 
     while True:
         try:
@@ -39,9 +58,14 @@ def main():
                 continue
 
             log.info(f"실행 시작: reason={result.get('reason')}")
-            upload_url = result.get("upload_url", f"{cfg['server_url']}/dentweb-upload")
+
+            if not runner.is_configured():
+                api.report_run("failed", "클릭 좌표가 설정되지 않았습니다. 에이전트를 재시작하세요.")
+                log.error("클릭 좌표 미설정")
+                continue
 
             # 1. DentWeb 자동화 -> Excel 다운로드
+            log.info("덴트웹 자동화 시작...")
             excel_path = runner.download_excel()
             if not excel_path:
                 api.report_run("no_data", "Excel 파일을 찾을 수 없습니다")
@@ -49,6 +73,7 @@ def main():
                 continue
 
             # 2. 서버로 업로드
+            upload_url = result.get("upload_url", f"{cfg['server_url']}/dentweb-upload")
             upload_result = api.upload_file(upload_url, excel_path)
             if upload_result.get("success"):
                 inserted = upload_result.get("inserted", 0)

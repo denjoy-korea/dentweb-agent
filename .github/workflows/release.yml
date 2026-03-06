@@ -26,7 +26,6 @@ jobs:
       - name: Build exe
         run: |
           pyinstaller --onefile --name dentweb-agent `
-            --add-data "images;images" `
             --add-data "config.example.json;." `
             main.py
 
