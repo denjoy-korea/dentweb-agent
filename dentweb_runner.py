@@ -4,8 +4,8 @@
 1. pygetwindow로 '덴트웹' 창 자동 탐색 → 활성화 (최소화 복원 포함)
 2. 경영/통계 → 임플란트 수술 통계
 3. 특정기간 → 부터 '오늘' → 까지 '오늘' (당일 조회)
-4. 데이터 유무 확인 → 없으면 중단
-5. 엑셀저장 → 저장 다이얼로그 → 파일 업로드
+4. 엑셀저장 → 저장 다이얼로그 → 파일 저장
+5. "수술기록지" 시트 2행 이하 데이터 유무로 판별
 """
 
 import os
@@ -14,6 +14,7 @@ import time
 import glob
 import pyautogui
 import pyperclip
+from openpyxl import load_workbook
 
 
 STEPS_FILE = "dentweb_steps.json"
@@ -38,7 +39,6 @@ DATA_STEPS = [
     {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 0.5},
     {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 0.5},
     {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 3.0},
-    {"name": "data_check", "label": "수술기록목지 첫 번째 행 위치 (데이터 유무 확인용)", "x": None, "y": None, "wait_after": 0, "group": "check"},
     {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 2.0},
 ]
 
@@ -56,6 +56,9 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
 
     for step in data.get("data_steps", []):
         if step.get("skip"):
+            continue
+        # data_check는 더 이상 사용하지 않으므로 무시
+        if step.get("name") == "data_check":
             continue
         if step.get("x") is None or step.get("y") is None:
             return None
@@ -99,7 +102,7 @@ def run_teach_mode() -> dict:
     print()
     print("순서: 경영/통계 → 임플란트 수술 통계 → 특정기간")
     print("      → 부터(달력 열기 → 오늘) → 까지(달력 열기 → 오늘)")
-    print("      → 데이터 확인 위치 → 엑셀저장")
+    print("      → 엑셀저장")
     print()
     input("준비되면 Enter...")
 
@@ -109,13 +112,7 @@ def run_teach_mode() -> dict:
     while i < len(steps):
         step = steps[i]
         print(f"\n[{i + 1}/{len(steps)}] {step['label']}")
-
-        if step.get("group") == "check":
-            print(f"  → 데이터가 표시되는 영역(첫 번째 행)에 마우스를 올려주세요.")
-            print(f"    (비어있으면 엑셀저장을 건너뜁니다)")
-        else:
-            print(f"  → 해당 위치에 마우스를 올려주세요.")
-
+        print(f"  → 해당 위치에 마우스를 올려주세요.")
         print(f"  → Enter=카운트다운 시작 / s=건너뛰기 / r=처음부터")
         choice = input("  → ").strip().lower()
 
@@ -174,7 +171,6 @@ class DentwebRunner:
                 time.sleep(0.5)
             win.activate()
             time.sleep(0.5)
-            # 최대화되지 않았으면 최대화
             if not win.isMaximized:
                 win.maximize()
                 time.sleep(0.5)
@@ -182,31 +178,34 @@ class DentwebRunner:
         except Exception:
             return False
 
-    def _has_data(self) -> bool:
-        """수술기록목지 첫 행의 픽셀을 검사해서 데이터 유무 판별"""
-        if not self._data:
+    @staticmethod
+    def excel_has_data(file_path: str) -> bool:
+        """수술기록지 시트의 2행 이하에 데이터가 있는지 확인"""
+        try:
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+
+            # "수술기록지" 시트 찾기
+            sheet = None
+            for name in wb.sheetnames:
+                if "수술기록지" in name:
+                    sheet = wb[name]
+                    break
+
+            if sheet is None:
+                wb.close()
+                return False
+
+            # 2행부터 데이터 확인 (A열 기준)
+            has_data = False
+            for row in sheet.iter_rows(min_row=2, max_row=2, max_col=1, values_only=True):
+                if row[0] is not None and str(row[0]).strip():
+                    has_data = True
+                    break
+
+            wb.close()
+            return has_data
+        except Exception:
             return False
-
-        check_step = None
-        for step in self._data.get("data_steps", []):
-            if step.get("name") == "data_check" and not step.get("skip"):
-                check_step = step
-                break
-        if not check_step:
-            return True
-
-        cx, cy = check_step["x"], check_step["y"]
-        region = (cx - 50, cy - 15, 100, 30)
-        screenshot = pyautogui.screenshot(region=region)
-
-        dark_pixel_count = 0
-        for x in range(screenshot.width):
-            for y in range(screenshot.height):
-                r, g, b = screenshot.getpixel((x, y))
-                if r < 100 and g < 100 and b < 100:
-                    dark_pixel_count += 1
-
-        return dark_pixel_count > 20
 
     def _wait_for_download(self) -> str | None:
         """다운로드 폴더에서 엑셀 파일 감지"""
@@ -227,7 +226,11 @@ class DentwebRunner:
         return None
 
     def download_excel(self) -> str | None:
-        """전체 자동화: 덴트웹 활성화 → 데이터 추출 → Excel 반환"""
+        """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별
+
+        Returns:
+            파일 경로 (데이터 있음) / None (데이터 없음 또는 실패)
+        """
         if not self._data:
             return None
 
@@ -239,18 +242,14 @@ class DentwebRunner:
         for step in self._data.get("data_steps", []):
             if step.get("skip"):
                 continue
-            if step.get("group") == "check":
-                continue
+            if step.get("name") == "data_check":
+                continue  # 레거시 호환: 이전 설정에 data_check이 있어도 무시
             if step.get("name") == "export_btn":
                 break
             pyautogui.click(step["x"], step["y"])
             time.sleep(step.get("wait_after", 0.5))
 
-        # 3. 데이터 유무 확인
-        if not self._has_data():
-            return None
-
-        # 4. 엑셀저장 클릭
+        # 3. 엑셀저장 클릭 (항상 실행)
         export_step = None
         for step in self._data.get("data_steps", []):
             if step.get("name") == "export_btn" and not step.get("skip"):
@@ -262,7 +261,7 @@ class DentwebRunner:
         pyautogui.click(export_step["x"], export_step["y"])
         time.sleep(export_step.get("wait_after", 2.0))
 
-        # 5. "다른 이름으로 저장" 다이얼로그 처리
+        # 4. "다른 이름으로 저장" 다이얼로그 처리
         save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
         pyautogui.hotkey("alt", "n")  # 파일 이름 필드 포커스
         time.sleep(0.3)
@@ -272,12 +271,21 @@ class DentwebRunner:
         time.sleep(0.3)
         pyautogui.press("enter")
 
-        # 6. 덮어쓰기 확인 → Enter
+        # 5. 덮어쓰기 확인 → Enter
         time.sleep(1)
         pyautogui.press("enter")
 
-        # 7. 파일 저장 대기
-        return self._wait_for_download()
+        # 6. 파일 저장 대기
+        excel_path = self._wait_for_download()
+        if not excel_path:
+            return None
+
+        # 7. "수술기록지" 시트 2행 데이터 확인
+        if not self.excel_has_data(excel_path):
+            self.cleanup(excel_path)
+            return None
+
+        return excel_path
 
     def cleanup(self, file_path: str):
         try:

@@ -19,7 +19,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "2.3.4"
+VERSION = "2.4.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -435,10 +435,12 @@ class AgentApp(ctk.CTk):
                     time.sleep(poll_interval)
                     continue
 
-                # 자동화 실행 — topmost 해제 (덴트웹 클릭 방해 방지)
-                self.after(0, lambda: self.attributes("-topmost", False))
+                # 자동화 실행 — 창 최소화 (덴트웹 클릭/스크린샷 방해 방지)
+                self.after(0, lambda: self.iconify())
+                time.sleep(0.5)  # 최소화 완료 대기
                 self.after(0, lambda: self._gui_log("덴트웹 자동화 시작..."))
                 excel_path = self.runner.download_excel()
+                self.after(0, lambda: self.deiconify())
                 self.after(0, lambda: self.attributes("-topmost", True))
 
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -693,11 +695,7 @@ class TeachWindow(ctk.CTkToplevel):
         self._progress_bar.set(idx / total)
         self._instruction.configure(text=step["label"])
 
-        if step.get("group") == "check":
-            self._hint.configure(
-                text="데이터가 표시되는 영역(첫 번째 행)에\n마우스를 올려주세요.")
-        else:
-            self._hint.configure(text="해당 위치에 마우스를 올린 뒤\n'캡처 시작'을 클릭하세요.")
+        self._hint.configure(text="해당 위치에 마우스를 올린 뒤\n'캡처 시작'을 클릭하세요.")
 
         self._countdown_label.configure(text="")
         self._capture_btn.configure(state="normal", text="캡처 시작")
