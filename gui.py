@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.3.5"
+VERSION = "3.3.6"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -993,7 +993,7 @@ class TestWindow(ctk.CTkToplevel):
 
     def _do_click_test(self):
         step = self.steps[self.current_step]
-        from dentweb_runner import _find_and_click, DentwebRunner
+        from dentweb_runner import _find_and_click
 
         # 오프셋 적용
         try:
@@ -1008,26 +1008,22 @@ class TestWindow(ctk.CTkToplevel):
                 step["y"] += oy
                 save_config_data({"data_steps": self.steps})
 
-        # 1. 테스트 창 topmost 해제
-        self.after(0, lambda: self.attributes("-topmost", False))
+        # 1. 테스트 창 숨기기 (덴트웹 방해 안 하도록)
+        self.after(0, lambda: self.withdraw())
         time.sleep(0.5)
 
-        # 2. 덴트웹 창을 포그라운드로 활성화
-        runner = DentwebRunner(self.parent_app.cfg)
+        # 2. 바로 클릭 (덴트웹이 이미 앞에 있으므로)
         result_msgs = []
         def log_cb(msg):
             result_msgs.append(msg)
 
-        runner._activate_dentweb(log_callback=log_cb)
-        time.sleep(1)
+        success = _find_and_click(step, log_callback=log_cb)
 
-        # 3. 클릭 (항상 activate_first=True — 테스트는 매번 포커스 확보 필요)
-        success = _find_and_click(step, log_callback=log_cb, activate_first=True)
-
-        # 4. 3초 대기 (덴트웹 화면 전환 확인용)
+        # 3. 3초 대기 (덴트웹 화면 전환 확인용)
         time.sleep(3)
 
-        # 5. 테스트 창 복원
+        # 4. 테스트 창 복원
+        self.after(0, lambda: self.deiconify())
         self.after(0, lambda: self.attributes("-topmost", True))
         self.after(0, lambda: self.lift())
 
