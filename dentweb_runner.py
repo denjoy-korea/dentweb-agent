@@ -45,6 +45,7 @@ DATA_STEPS = [
     {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 0.5, "group": "data"},
     {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 0.5, "group": "data"},
     {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 3.0, "group": "data"},
+    {"name": "data_check", "label": "수술기록목지 첫 번째 행 위치 (데이터 유무 확인용)", "x": None, "y": None, "wait_after": 0, "group": "check"},
     {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 2.0, "group": "data"},
 ]
 
@@ -88,6 +89,9 @@ def _teach_steps(steps: list[dict], group_label: str) -> list[dict]:
 
         if step_type in ("text_input", "password_input"):
             print(f"  → 입력 필드를 클릭할 위치에 마우스를 올려주세요.")
+        elif step.get("group") == "check":
+            print(f"  → 데이터가 표시되는 영역(첫 번째 행)에 마우스를 올려주세요.")
+            print(f"    (비어있으면 엑셀저장을 건너뜁니다)")
         else:
             print(f"  → 해당 위치에 마우스를 올려주세요.")
 
@@ -345,8 +349,40 @@ class DentwebRunner:
             time.sleep(1)
         return None
 
+    def _has_data(self) -> bool:
+        """수술기록목지 첫 행 위치의 픽셀을 검사해서 데이터 유무 판별.
+        빈 화면은 배경색(흰색 계열)만 있고, 데이터가 있으면 텍스트 픽셀이 존재."""
+        if not self._data:
+            return False
+
+        check_step = None
+        for step in self._data.get("data_steps", []):
+            if step.get("name") == "data_check" and not step.get("skip"):
+                check_step = step
+                break
+        if not check_step:
+            return True  # 체크 좌표가 없으면 항상 데이터 있다고 간주
+
+        cx, cy = check_step["x"], check_step["y"]
+        # 해당 좌표 주변 100x30 영역 캡처
+        region = (cx - 50, cy - 15, 100, 30)
+        screenshot = pyautogui.screenshot(region=region)
+
+        # 픽셀 색상 분석: 어두운 픽셀(텍스트)이 있으면 데이터 존재
+        dark_pixel_count = 0
+        for x in range(screenshot.width):
+            for y in range(screenshot.height):
+                r, g, b = screenshot.getpixel((x, y))
+                # 텍스트는 어두운 색 (RGB 모두 < 100)
+                if r < 100 and g < 100 and b < 100:
+                    dark_pixel_count += 1
+
+        # 어두운 픽셀이 일정 수 이상이면 텍스트(데이터) 존재
+        return dark_pixel_count > 20
+
     def download_excel(self) -> str | None:
-        """전체 자동화: 덴트웹 준비 → 데이터 추출 → Excel 반환"""
+        """전체 자동화: 덴트웹 준비 → 데이터 추출 → Excel 반환
+        데이터가 없으면 None 반환 (엑셀저장 생략)"""
         if not self._data:
             return None
 
@@ -354,18 +390,35 @@ class DentwebRunner:
         if not self.ensure_dentweb_ready():
             return None
 
-        # 2. 데이터 추출 시퀀스 (모두 단순 좌표 클릭)
+        # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
         for step in self._data.get("data_steps", []):
             if step.get("skip"):
                 continue
+            if step.get("group") == "check":
+                continue  # 체크 단계는 별도 처리
+            if step.get("name") == "export_btn":
+                break  # 엑셀저장은 데이터 확인 후
             pyautogui.click(step["x"], step["y"])
             time.sleep(step.get("wait_after", 0.5))
 
-        # 3. "다른 이름으로 저장" 다이얼로그 처리
-        #    파일 이름 필드에 다운로드 경로 포함하여 입력 후 Enter
-        time.sleep(1.5)
+        # 3. 데이터 유무 확인
+        if not self._has_data():
+            return None  # 수술 기록 없음 → 중단
+
+        # 4. 엑셀저장 클릭
+        export_step = None
+        for step in self._data.get("data_steps", []):
+            if step.get("name") == "export_btn" and not step.get("skip"):
+                export_step = step
+                break
+        if not export_step:
+            return None
+
+        pyautogui.click(export_step["x"], export_step["y"])
+        time.sleep(export_step.get("wait_after", 2.0))
+
+        # 5. "다른 이름으로 저장" 다이얼로그 처리
         save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
-        # 파일 이름 입력란(하단)에 전체 경로 붙여넣기
         pyautogui.hotkey("alt", "n")  # 파일 이름 필드로 포커스
         time.sleep(0.3)
         pyautogui.hotkey("ctrl", "a")
@@ -374,7 +427,11 @@ class DentwebRunner:
         time.sleep(0.3)
         pyautogui.press("enter")
 
-        # 4. 파일 저장 대기
+        # 6. 덮어쓰기 확인 다이얼로그가 뜰 수 있음 → Enter
+        time.sleep(1)
+        pyautogui.press("enter")
+
+        # 7. 파일 저장 대기
         return self._wait_for_download()
 
     def cleanup(self, file_path: str):

@@ -68,8 +68,8 @@ def main():
             log.info("덴트웹 자동화 시작...")
             excel_path = runner.download_excel()
             if not excel_path:
-                api.report_run("no_data", "Excel 파일을 찾을 수 없습니다")
-                log.warn("Excel 다운로드 실패")
+                api.report_run("no_data", "오늘 수술 기록이 없습니다")
+                log.info("오늘 수술 기록 없음 - 작업 완료")
                 continue
 
             # 2. 서버로 업로드
