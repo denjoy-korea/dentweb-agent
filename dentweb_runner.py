@@ -158,25 +158,83 @@ class DentwebRunner:
     def teach(self):
         self._data = run_teach_mode()
 
-    def _activate_dentweb(self) -> bool:
-        """pygetwindow로 '덴트웹' 창을 찾아서 포그라운드로 활성화"""
+    def _activate_dentweb(self, log_callback=None) -> bool:
+        """'덴트웹' 창을 찾아서 포그라운드로 활성화"""
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+
+        # 방법 1: pygetwindow
         try:
             import pygetwindow as gw
-            windows = gw.getWindowsWithTitle(WINDOW_TITLE)
-            if not windows:
-                return False
-            win = windows[0]
-            if win.isMinimized:
-                win.restore()
+            all_windows = gw.getAllTitles()
+            _log(f"열린 창 {len(all_windows)}개 탐색 중...")
+
+            # 부분 일치로 '덴트웹' 포함된 창 찾기
+            matched = [t for t in all_windows if WINDOW_TITLE in t]
+            if not matched:
+                _log(f"'{WINDOW_TITLE}' 포함된 창 없음")
+                # 디버깅: 한글 포함 창 목록 표시
+                korean_wins = [t for t in all_windows if t.strip()]
+                _log(f"전체 창 목록: {korean_wins[:10]}")
+            else:
+                _log(f"찾은 창: {matched[0]}")
+                windows = gw.getWindowsWithTitle(matched[0])
+                if windows:
+                    win = windows[0]
+                    if win.isMinimized:
+                        win.restore()
+                        time.sleep(0.5)
+                    win.activate()
+                    time.sleep(0.5)
+                    if not win.isMaximized:
+                        win.maximize()
+                        time.sleep(0.5)
+                    return True
+        except Exception as e:
+            _log(f"pygetwindow 오류: {e}")
+
+        # 방법 2: win32gui 직접 사용 (fallback)
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            def _find_window_callback(hwnd, results):
+                if ctypes.windll.user32.IsWindowVisible(hwnd):
+                    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                        if WINDOW_TITLE in buf.value:
+                            results.append(hwnd)
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(
+                ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+            )
+            results = []
+            ctypes.windll.user32.EnumWindows(
+                WNDENUMPROC(lambda hwnd, _: _find_window_callback(hwnd, results) or True),
+                0,
+            )
+
+            if results:
+                hwnd = results[0]
+                _log(f"win32gui로 창 발견 (hwnd={hwnd})")
+                # SW_RESTORE = 9, SW_MAXIMIZE = 3
+                ctypes.windll.user32.ShowWindow(hwnd, 9)
+                time.sleep(0.3)
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                time.sleep(0.3)
+                ctypes.windll.user32.ShowWindow(hwnd, 3)
                 time.sleep(0.5)
-            win.activate()
-            time.sleep(0.5)
-            if not win.isMaximized:
-                win.maximize()
-                time.sleep(0.5)
-            return True
-        except Exception:
-            return False
+                return True
+            else:
+                _log("win32gui로도 창을 찾을 수 없습니다")
+        except Exception as e:
+            _log(f"win32gui 오류: {e}")
+
+        return False
 
     @staticmethod
     def excel_has_data(file_path: str) -> bool:
@@ -244,7 +302,7 @@ class DentwebRunner:
 
         # 1. 덴트웹 창 자동 탐색 + 활성화
         _log("덴트웹 창 탐색 중...")
-        if not self._activate_dentweb():
+        if not self._activate_dentweb(log_callback=log_callback):
             _log("덴트웹 창을 찾을 수 없습니다")
             return None
         _log("덴트웹 창 활성화 완료 — 2초 대기")
