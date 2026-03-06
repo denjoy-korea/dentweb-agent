@@ -39,8 +39,11 @@ def _paste_text(text: str):
 
 
 def _win32_click(x: int, y: int):
-    """pyautogui 왼쪽 더블클릭"""
-    pyautogui.doubleClick(int(x), int(y), button="left")
+    """클릭 2회: 1번째=창 활성화, 2번째=실제 클릭"""
+    ix, iy = int(x), int(y)
+    pyautogui.click(ix, iy, button="left")  # 창 활성화용
+    time.sleep(0.3)
+    pyautogui.click(ix, iy, button="left")  # 실제 클릭
     time.sleep(0.1)
 
 
