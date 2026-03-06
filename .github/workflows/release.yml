@@ -28,6 +28,7 @@ jobs:
           pyinstaller --onefile --noconsole --name dentweb-agent `
             --collect-all customtkinter `
             --hidden-import cv2 `
+            --uac-admin `
             main.py
 
       - name: Upload Release Asset
