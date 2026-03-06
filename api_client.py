@@ -19,7 +19,7 @@ class ApiClient:
             self.automation_url,
             json={"action": "get_state"},
             headers=self.headers,
-            timeout=10,
+            timeout=30,
         )
         resp.raise_for_status()
         return resp.json()
@@ -29,7 +29,7 @@ class ApiClient:
             self.automation_url,
             json={"action": "claim_run"},
             headers=self.headers,
-            timeout=10,
+            timeout=30,
         )
         resp.raise_for_status()
         return resp.json()
@@ -39,7 +39,7 @@ class ApiClient:
             self.automation_url,
             json={"action": "report_run", "status": status, "message": message},
             headers=self.headers,
-            timeout=10,
+            timeout=30,
         )
         resp.raise_for_status()
         return resp.json()
