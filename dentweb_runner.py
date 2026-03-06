@@ -225,18 +225,29 @@ class DentwebRunner:
             time.sleep(1)
         return None
 
-    def download_excel(self) -> str | None:
+    def download_excel(self, log_callback=None) -> str | None:
         """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별
+
+        Args:
+            log_callback: 진행 상황 로그 콜백 (GUI 실시간 표시용)
 
         Returns:
             파일 경로 (데이터 있음) / None (데이터 없음 또는 실패)
         """
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+
         if not self._data:
+            _log("설정 데이터 없음")
             return None
 
         # 1. 덴트웹 창 자동 탐색 + 활성화
+        _log("덴트웹 창 탐색 중...")
         if not self._activate_dentweb():
+            _log("덴트웹 창을 찾을 수 없습니다")
             return None
+        _log("덴트웹 창 활성화 완료")
 
         # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
         for step in self._data.get("data_steps", []):
@@ -246,6 +257,7 @@ class DentwebRunner:
                 continue  # 레거시 호환: 이전 설정에 data_check이 있어도 무시
             if step.get("name") == "export_btn":
                 break
+            _log(f"클릭: {step['label']} ({step['x']}, {step['y']})")
             pyautogui.click(step["x"], step["y"])
             time.sleep(step.get("wait_after", 0.5))
 
@@ -256,13 +268,16 @@ class DentwebRunner:
                 export_step = step
                 break
         if not export_step:
+            _log("엑셀저장 버튼 좌표 없음")
             return None
 
+        _log(f"클릭: {export_step['label']} ({export_step['x']}, {export_step['y']})")
         pyautogui.click(export_step["x"], export_step["y"])
         time.sleep(export_step.get("wait_after", 2.0))
 
         # 4. "다른 이름으로 저장" 다이얼로그 처리
         save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
+        _log("저장 다이얼로그 처리 중...")
         pyautogui.hotkey("alt", "n")  # 파일 이름 필드 포커스
         time.sleep(0.3)
         pyautogui.hotkey("ctrl", "a")
@@ -276,15 +291,21 @@ class DentwebRunner:
         pyautogui.press("enter")
 
         # 6. 파일 저장 대기
+        _log("엑셀 파일 저장 대기 중...")
         excel_path = self._wait_for_download()
         if not excel_path:
+            _log("엑셀 파일 저장 시간 초과")
             return None
+        _log(f"엑셀 파일 저장 완료: {os.path.basename(excel_path)}")
 
         # 7. "수술기록지" 시트 2행 데이터 확인
+        _log("수술기록지 데이터 확인 중...")
         if not self.excel_has_data(excel_path):
+            _log("수술기록지에 데이터 없음 (빈 파일)")
             self.cleanup(excel_path)
             return None
 
+        _log("수술 기록 데이터 확인 완료")
         return excel_path
 
     def cleanup(self, file_path: str):

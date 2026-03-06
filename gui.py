@@ -19,7 +19,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -183,7 +183,7 @@ class AgentApp(ctk.CTk):
             try:
                 cfg = {**DEFAULTS, "agent_token": token}
                 api = ApiClient(cfg["server_url"], token)
-                api.claim_run()
+                api.ping()
                 # 성공
                 self.after(0, lambda: self._setup_success(token))
             except Exception as e:
@@ -435,13 +435,14 @@ class AgentApp(ctk.CTk):
                     time.sleep(poll_interval)
                     continue
 
-                # 자동화 실행 — 창 최소화 (덴트웹 클릭/스크린샷 방해 방지)
-                self.after(0, lambda: self.iconify())
-                time.sleep(0.5)  # 최소화 완료 대기
+                # 자동화 실행 — topmost 해제 + 화면 우하단으로 이동 (덴트웹 클릭 방해 방지)
+                self.after(0, lambda: self._prepare_for_automation())
+                time.sleep(0.5)  # 이동 완료 대기
                 self.after(0, lambda: self._gui_log("덴트웹 자동화 시작..."))
-                excel_path = self.runner.download_excel()
-                self.after(0, lambda: self.deiconify())
-                self.after(0, lambda: self.attributes("-topmost", True))
+                excel_path = self.runner.download_excel(
+                    log_callback=lambda msg: self.after(0, lambda m=msg: self._gui_log(m))
+                )
+                self.after(0, lambda: self._restore_after_automation())
 
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -484,6 +485,27 @@ class AgentApp(ctk.CTk):
                     pass
 
             time.sleep(poll_interval)
+
+    # ─── Automation Window Management ───
+
+    def _prepare_for_automation(self):
+        """자동화 시작: topmost 해제 + 화면 우하단 이동 (로그 계속 표시)"""
+        self._saved_geometry = self.geometry()  # 원래 위치 저장
+        self.attributes("-topmost", False)
+        # 화면 우하단으로 이동 (작게)
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        w, h = 440, 620
+        x = screen_w - w - 10
+        y = screen_h - h - 60  # 태스크바 위
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _restore_after_automation(self):
+        """자동화 끝: topmost 복원 + 원래 위치"""
+        self.attributes("-topmost", True)
+        if hasattr(self, "_saved_geometry") and self._saved_geometry:
+            self.geometry(self._saved_geometry)
+        self.lift()
 
     # ─── Teach Mode (GUI) ───
 
