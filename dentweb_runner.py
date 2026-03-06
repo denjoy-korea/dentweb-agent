@@ -1,11 +1,14 @@
-"""좌표 기반 DentWeb 자동화 시퀀스
+"""이미지 인식 기반 DentWeb 자동화 시퀀스
 
 전체 흐름:
-1. pygetwindow로 '덴트웹' 창 자동 탐색 → 활성화 (최소화 복원 포함)
+1. 덴트웹 창 자동 탐색 → 활성화 (최소화 복원 포함)
 2. 경영/통계 → 임플란트 수술 통계
 3. 특정기간 → 부터 '오늘' → 까지 '오늘' (당일 조회)
 4. 엑셀저장 → 저장 다이얼로그 → 파일 저장
 5. "수술기록지" 시트 2행 이하 데이터 유무로 판별
+
+학습 모드에서 각 버튼의 스크린샷을 캡처하고,
+자동화 시 pyautogui.locateCenterOnScreen()으로 이미지를 찾아 클릭.
 """
 
 import os
@@ -14,11 +17,17 @@ import time
 import glob
 import pyautogui
 import pyperclip
+from PIL import Image
 from openpyxl import load_workbook
 
 
 STEPS_FILE = "dentweb_steps.json"
+TEMPLATES_DIR = "templates"
 WINDOW_TITLE = "덴트웹"
+
+# 템플릿 캡처 크기 (마우스 위치 중심으로 캡처)
+CAPTURE_W = 120
+CAPTURE_H = 50
 
 
 def _paste_text(text: str):
@@ -43,6 +52,63 @@ DATA_STEPS = [
 ]
 
 
+def _get_template_path(step_name: str) -> str:
+    return os.path.join(TEMPLATES_DIR, f"{step_name}.png")
+
+
+def _capture_template(x: int, y: int, step_name: str) -> str:
+    """마우스 위치 주변 영역을 스크린샷으로 캡처하여 템플릿 저장"""
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+
+    # 캡처 영역 계산 (화면 경계 처리)
+    screen_w, screen_h = pyautogui.size()
+    left = max(0, x - CAPTURE_W // 2)
+    top = max(0, y - CAPTURE_H // 2)
+    right = min(screen_w, left + CAPTURE_W)
+    bottom = min(screen_h, top + CAPTURE_H)
+    w = right - left
+    h = bottom - top
+
+    screenshot = pyautogui.screenshot(region=(left, top, w, h))
+    path = _get_template_path(step_name)
+    screenshot.save(path)
+    return path
+
+
+def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> bool:
+    """이미지 인식으로 버튼을 찾아 클릭. 실패 시 좌표 폴백."""
+    def _log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    template_path = _get_template_path(step["name"])
+
+    # 1차: 이미지 인식
+    if os.path.exists(template_path):
+        try:
+            location = pyautogui.locateCenterOnScreen(
+                template_path, confidence=confidence
+            )
+            if location:
+                cx, cy = location
+                _log(f"이미지 발견: {step['label']} → 클릭 ({cx}, {cy})")
+                pyautogui.click(cx, cy)
+                return True
+            else:
+                _log(f"이미지 못 찾음: {step['label']} — 좌표 폴백 시도")
+        except Exception as e:
+            _log(f"이미지 검색 오류: {e} — 좌표 폴백 시도")
+
+    # 2차: 저장된 좌표로 폴백
+    if step.get("x") is not None and step.get("y") is not None:
+        _log(f"좌표 폴백: {step['label']} ({step['x']}, {step['y']})")
+        pyautogui.click(step["x"], step["y"])
+        return True
+
+    _log(f"클릭 실패: {step['label']} — 이미지도 좌표도 없음")
+    return False
+
+
 # --- 설정 파일 관리 ---
 
 def load_config_data(path: str = STEPS_FILE) -> dict | None:
@@ -57,8 +123,11 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
     for step in data.get("data_steps", []):
         if step.get("skip"):
             continue
-        # data_check는 더 이상 사용하지 않으므로 무시
         if step.get("name") == "data_check":
+            continue
+        # 이미지 템플릿이 있으면 좌표 없어도 OK
+        template_path = _get_template_path(step.get("name", ""))
+        if os.path.exists(template_path):
             continue
         if step.get("x") is None or step.get("y") is None:
             return None
@@ -70,13 +139,12 @@ def save_config_data(data: dict, path: str = STEPS_FILE):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-# --- 학습 모드 ---
+# --- 학습 모드 (CLI - 레거시) ---
 
 CAPTURE_DELAY = 5
 
 
 def _countdown_capture() -> tuple[int, int]:
-    """카운트다운 후 마우스 위치 캡처"""
     for remaining in range(CAPTURE_DELAY, 0, -1):
         print(f"\r  → {remaining}초 후 마우스 위치 저장...", end="", flush=True)
         time.sleep(1)
@@ -90,57 +158,31 @@ def run_teach_mode() -> dict:
     print("=" * 55)
     print("  덴트웹 자동화 - 클릭 위치 학습")
     print("=" * 55)
-    print()
-    print("덴트웹이 열린 상태에서 진행합니다.")
-    print()
-    print("각 단계에서:")
-    print("  1. 이 창에서 Enter를 누르면 5초 카운트다운 시작")
-    print("  2. 덴트웹으로 전환하여 해당 위치에 마우스를 올림")
-    print("  3. 카운트다운이 끝나면 마우스 위치 자동 저장")
-    print()
-    print("  's' = 단계 건너뛰기 / 'r' = 처음부터")
-    print()
-    print("순서: 경영/통계 → 임플란트 수술 통계 → 특정기간")
-    print("      → 부터(달력 열기 → 오늘) → 까지(달력 열기 → 오늘)")
-    print("      → 엑셀저장")
-    print()
     input("준비되면 Enter...")
 
     steps = json.loads(json.dumps(DATA_STEPS))
-
     i = 0
     while i < len(steps):
         step = steps[i]
         print(f"\n[{i + 1}/{len(steps)}] {step['label']}")
-        print(f"  → 해당 위치에 마우스를 올려주세요.")
-        print(f"  → Enter=카운트다운 시작 / s=건너뛰기 / r=처음부터")
-        choice = input("  → ").strip().lower()
-
+        choice = input("  → Enter/s/r: ").strip().lower()
         if choice == "r":
             steps = json.loads(json.dumps(DATA_STEPS))
             i = 0
-            print("\n처음부터 다시 시작합니다.")
             continue
-
         if choice == "s":
-            print(f"  → '{step['label']}' 건너뜀")
             steps[i]["skip"] = True
             i += 1
             continue
-
-        print(f"  → 지금 덴트웹에서 '{step['label']}' 위에 마우스를 올려주세요!")
         x, y = _countdown_capture()
         steps[i]["x"] = x
         steps[i]["y"] = y
         steps[i]["skip"] = False
+        _capture_template(x, y, step["name"])
         i += 1
 
     result = {"data_steps": steps}
     save_config_data(result)
-    print()
-    print(f"설정 저장 완료: {os.path.abspath(STEPS_FILE)}")
-    print("다음 실행부터 자동화에 사용됩니다.")
-    print()
     return result
 
 
@@ -170,11 +212,9 @@ class DentwebRunner:
             all_windows = gw.getAllTitles()
             _log(f"열린 창 {len(all_windows)}개 탐색 중...")
 
-            # 부분 일치로 '덴트웹' 포함된 창 찾기
             matched = [t for t in all_windows if WINDOW_TITLE in t]
             if not matched:
                 _log(f"'{WINDOW_TITLE}' 포함된 창 없음")
-                # 디버깅: 한글 포함 창 목록 표시
                 korean_wins = [t for t in all_windows if t.strip()]
                 _log(f"전체 창 목록: {korean_wins[:10]}")
             else:
@@ -194,7 +234,7 @@ class DentwebRunner:
         except Exception as e:
             _log(f"pygetwindow 오류: {e}")
 
-        # 방법 2: win32gui 직접 사용 (fallback)
+        # 방법 2: win32gui (fallback)
         try:
             import ctypes
             import ctypes.wintypes
@@ -221,7 +261,6 @@ class DentwebRunner:
             if results:
                 hwnd = results[0]
                 _log(f"win32gui로 창 발견 (hwnd={hwnd})")
-                # SW_RESTORE = 9, SW_MAXIMIZE = 3
                 ctypes.windll.user32.ShowWindow(hwnd, 9)
                 time.sleep(0.3)
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
@@ -241,25 +280,19 @@ class DentwebRunner:
         """수술기록지 시트의 2행 이하에 데이터가 있는지 확인"""
         try:
             wb = load_workbook(file_path, read_only=True, data_only=True)
-
-            # "수술기록지" 시트 찾기
             sheet = None
             for name in wb.sheetnames:
                 if "수술기록지" in name:
                     sheet = wb[name]
                     break
-
             if sheet is None:
                 wb.close()
                 return False
-
-            # 2행부터 데이터 확인 (A열 기준)
             has_data = False
             for row in sheet.iter_rows(min_row=2, max_row=2, max_col=1, values_only=True):
                 if row[0] is not None and str(row[0]).strip():
                     has_data = True
                     break
-
             wb.close()
             return has_data
         except Exception:
@@ -284,14 +317,7 @@ class DentwebRunner:
         return None
 
     def download_excel(self, log_callback=None) -> str | None:
-        """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별
-
-        Args:
-            log_callback: 진행 상황 로그 콜백 (GUI 실시간 표시용)
-
-        Returns:
-            파일 경로 (데이터 있음) / None (데이터 없음 또는 실패)
-        """
+        """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별"""
         def _log(msg):
             if log_callback:
                 log_callback(msg)
@@ -306,38 +332,40 @@ class DentwebRunner:
             _log("덴트웹 창을 찾을 수 없습니다")
             return None
         _log("덴트웹 창 활성화 완료 — 2초 대기")
-        time.sleep(2)  # 창 활성화 후 안정화 대기
+        time.sleep(2)
 
         # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
         for step in self._data.get("data_steps", []):
             if step.get("skip"):
                 continue
             if step.get("name") == "data_check":
-                continue  # 레거시 호환: 이전 설정에 data_check이 있어도 무시
+                continue
             if step.get("name") == "export_btn":
                 break
-            _log(f"클릭: {step['label']} ({step['x']}, {step['y']})")
-            pyautogui.click(step["x"], step["y"])
-            time.sleep(step.get("wait_after", 0.5))
+            if not _find_and_click(step, log_callback):
+                _log(f"단계 실패: {step['label']}")
+                return None
+            time.sleep(step.get("wait_after", 1.5))
 
-        # 3. 엑셀저장 클릭 (항상 실행)
+        # 3. 엑셀저장 클릭
         export_step = None
         for step in self._data.get("data_steps", []):
             if step.get("name") == "export_btn" and not step.get("skip"):
                 export_step = step
                 break
         if not export_step:
-            _log("엑셀저장 버튼 좌표 없음")
+            _log("엑셀저장 버튼 설정 없음")
             return None
 
-        _log(f"클릭: {export_step['label']} ({export_step['x']}, {export_step['y']})")
-        pyautogui.click(export_step["x"], export_step["y"])
-        time.sleep(export_step.get("wait_after", 2.0))
+        if not _find_and_click(export_step, log_callback):
+            _log("엑셀저장 버튼 클릭 실패")
+            return None
+        time.sleep(export_step.get("wait_after", 3.0))
 
         # 4. "다른 이름으로 저장" 다이얼로그 처리
         save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
         _log("저장 다이얼로그 처리 중...")
-        pyautogui.hotkey("alt", "n")  # 파일 이름 필드 포커스
+        pyautogui.hotkey("alt", "n")
         time.sleep(0.5)
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.3)
@@ -345,7 +373,7 @@ class DentwebRunner:
         time.sleep(0.5)
         pyautogui.press("enter")
 
-        # 5. 덮어쓰기 확인 → Enter
+        # 5. 덮어쓰기 확인
         time.sleep(2)
         pyautogui.press("enter")
 

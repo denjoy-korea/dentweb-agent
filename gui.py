@@ -13,13 +13,14 @@ from config import DEFAULTS, SERVER_URL
 from api_client import ApiClient
 from dentweb_runner import (
     DentwebRunner, DATA_STEPS, save_config_data, load_config_data, STEPS_FILE,
+    _capture_template,
 )
 from logger import AgentLogger
 from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "2.6.0"
+VERSION = "3.0.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -741,12 +742,18 @@ class TeachWindow(ctk.CTkToplevel):
             time.sleep(1)
 
         x, y = pyautogui.position()
+        step_name = self.steps[self.current_step]["name"]
         self.steps[self.current_step]["x"] = x
         self.steps[self.current_step]["y"] = y
         self.steps[self.current_step]["skip"] = False
 
+        # 마우스 위치 주변 영역을 템플릿 이미지로 캡처
+        _capture_template(x, y, step_name)
+
         self.after(0, lambda: self._countdown_label.configure(
             text=f"✓ ({x}, {y})", text_color=EMERALD_600))
+        self.after(0, lambda: self._hint.configure(
+            text="좌표 + 이미지 템플릿 저장 완료"))
 
         self.capturing = False
         self.current_step += 1
