@@ -38,11 +38,12 @@ def _paste_text(text: str):
     time.sleep(0.1)
 
 
-def _win32_click(x: int, y: int):
-    """클릭 2회: 1번째=창 활성화, 2번째=실제 클릭"""
+def _win32_click(x: int, y: int, activate_first: bool = False):
+    """왼쪽 클릭. activate_first=True면 활성화용 클릭 1회 추가"""
     ix, iy = int(x), int(y)
-    pyautogui.click(ix, iy, button="left")  # 창 활성화용
-    time.sleep(0.3)
+    if activate_first:
+        pyautogui.click(ix, iy, button="left")  # 창 활성화용
+        time.sleep(0.3)
     pyautogui.click(ix, iy, button="left")  # 실제 클릭
     time.sleep(0.1)
 
@@ -84,7 +85,8 @@ def _capture_template(x: int, y: int, step_name: str) -> str:
     return path
 
 
-def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> bool:
+def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8,
+                    activate_first: bool = False) -> bool:
     """이미지 인식으로 버튼을 찾아 클릭. 실패 시 좌표 폴백."""
     def _log(msg):
         if log_callback:
@@ -101,7 +103,7 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
             if location:
                 cx, cy = location
                 _log(f"이미지 발견: {step['label']} → 클릭 ({cx}, {cy})")
-                _win32_click(cx, cy)
+                _win32_click(cx, cy, activate_first=activate_first)
                 return True
             else:
                 _log(f"이미지 못 찾음: {step['label']} — 좌표 폴백 시도")
@@ -111,7 +113,7 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
     # 2차: 저장된 좌표로 폴백
     if step.get("x") is not None and step.get("y") is not None:
         _log(f"좌표 폴백: {step['label']} ({step['x']}, {step['y']})")
-        _win32_click(step["x"], step["y"])
+        _win32_click(step["x"], step["y"], activate_first=activate_first)
         return True
 
     _log(f"클릭 실패: {step['label']} — 이미지도 좌표도 없음")
@@ -344,6 +346,7 @@ class DentwebRunner:
         time.sleep(2)
 
         # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
+        is_first_click = True
         for step in self._data.get("data_steps", []):
             if step.get("skip"):
                 continue
@@ -351,9 +354,10 @@ class DentwebRunner:
                 continue
             if step.get("name") == "export_btn":
                 break
-            if not _find_and_click(step, log_callback):
+            if not _find_and_click(step, log_callback, activate_first=is_first_click):
                 _log(f"단계 실패: {step['label']}")
                 return None
+            is_first_click = False  # 이후 단계는 이미 활성화됨
             time.sleep(step.get("wait_after", 1.5))
 
         # 3. 엑셀저장 클릭
