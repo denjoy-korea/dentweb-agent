@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.0.1"
+VERSION = "3.1.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -341,13 +341,22 @@ class AgentApp(ctk.CTk):
         btn_frame.pack(fill="x", pady=(0, 4))
 
         teach_btn = ctk.CTkButton(
-            btn_frame, text="좌표 재설정", height=36, corner_radius=8,
+            btn_frame, text="좌표 설정", height=36, corner_radius=8,
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=SLATE_100, hover_color=SLATE_200,
             text_color=SLATE_700, border_width=1, border_color=SLATE_200,
             command=self._on_teach_click,
         )
-        teach_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        teach_btn.pack(side="left", expand=True, fill="x", padx=(0, 3))
+
+        test_btn = ctk.CTkButton(
+            btn_frame, text="단계별 테스트", height=36, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=EMERALD_50, hover_color=EMERALD_100,
+            text_color=EMERALD_600, border_width=1, border_color=EMERALD_100,
+            command=self._on_test_click,
+        )
+        test_btn.pack(side="left", expand=True, fill="x", padx=(3, 3))
 
         startup_text = "시작프로그램 해제" if is_registered() else "시작프로그램 등록"
         self._startup_btn = ctk.CTkButton(
@@ -357,7 +366,7 @@ class AgentApp(ctk.CTk):
             text_color=SLATE_700, border_width=1, border_color=SLATE_200,
             command=self._on_startup_toggle,
         )
-        self._startup_btn.pack(side="left", expand=True, fill="x", padx=(4, 0))
+        self._startup_btn.pack(side="left", expand=True, fill="x", padx=(3, 0))
 
         # 초기화 완료 → 좌표 체크 → 폴링 시작
         self._gui_log("에이전트 시작")
@@ -526,6 +535,21 @@ class AgentApp(ctk.CTk):
                 self._start_polling()
             else:
                 self._update_status("설정 필요", AMBER_500, "좌표 재설정을 눌러주세요")
+
+    # ─── Test Mode (GUI) ───
+
+    def _on_test_click(self):
+        if not self.runner or not self.runner.is_configured():
+            self._gui_log("좌표 설정을 먼저 해주세요", "ERROR")
+            return
+        self.polling = False
+        time.sleep(0.3)
+        TestWindow(self, self._on_test_complete)
+
+    def _on_test_complete(self):
+        self.runner = DentwebRunner(self.cfg)
+        if self.runner.is_configured():
+            self._start_polling()
 
     # ─── Update ───
 
@@ -778,6 +802,265 @@ class TeachWindow(ctk.CTkToplevel):
     def _on_cancel(self):
         self.capturing = False
         self.callback(False)
+        self.destroy()
+
+
+# ─── Test Mode Window ───
+
+class TestWindow(ctk.CTkToplevel):
+    """단계별 테스트: 한 단계씩 클릭하고 결과 확인, 재캡처 가능"""
+
+    def __init__(self, parent: AgentApp, callback):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.callback = callback
+
+        self.title("단계별 테스트")
+        self.geometry("400x480")
+        self.resizable(False, False)
+        self.configure(fg_color=WHITE)
+        self.attributes("-topmost", True)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # 화면 우하단
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        self.geometry(f"400x480+{screen_w - 440}+{screen_h - 560}")
+
+        data = load_config_data()
+        self.steps = data.get("data_steps", []) if data else []
+        self.current_step = 0
+
+        self._build_ui()
+        self._show_step()
+
+    def _build_ui(self):
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # 진행률
+        self._progress_label = ctk.CTkLabel(
+            container, text="",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=SLATE_500,
+        )
+        self._progress_label.pack(anchor="w")
+
+        self._progress_bar = ctk.CTkProgressBar(
+            container, height=4, corner_radius=2,
+            fg_color=SLATE_200, progress_color=EMERALD_500,
+        )
+        self._progress_bar.pack(fill="x", pady=(4, 12))
+
+        # 단계 이름
+        self._step_label = ctk.CTkLabel(
+            container, text="",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color=SLATE_900,
+            wraplength=340,
+        )
+        self._step_label.pack(pady=(0, 4))
+
+        # 템플릿 이미지 미리보기
+        self._image_frame = ctk.CTkFrame(container, fg_color=SLATE_100, corner_radius=8,
+                                          height=80, width=200)
+        self._image_frame.pack(pady=(4, 4))
+        self._image_frame.pack_propagate(False)
+
+        self._image_label = ctk.CTkLabel(self._image_frame, text="템플릿 없음",
+                                          font=ctk.CTkFont(size=11), text_color=SLATE_400)
+        self._image_label.pack(expand=True)
+
+        # 결과 표시
+        self._result_label = ctk.CTkLabel(
+            container, text="",
+            font=ctk.CTkFont(size=12), text_color=SLATE_700,
+            wraplength=340,
+        )
+        self._result_label.pack(pady=(4, 8))
+
+        # 좌표 조정 영역
+        adjust_frame = ctk.CTkFrame(container, fg_color="transparent")
+        adjust_frame.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(adjust_frame, text="클릭 위치 미세 조정:",
+                     font=ctk.CTkFont(size=11), text_color=SLATE_500).pack(anchor="w")
+
+        offset_frame = ctk.CTkFrame(adjust_frame, fg_color="transparent")
+        offset_frame.pack(fill="x", pady=(4, 0))
+
+        ctk.CTkLabel(offset_frame, text="X:", font=ctk.CTkFont(size=11),
+                     text_color=SLATE_700).pack(side="left")
+        self._offset_x = ctk.CTkEntry(offset_frame, width=60, height=28,
+                                        font=ctk.CTkFont(size=11), placeholder_text="0")
+        self._offset_x.pack(side="left", padx=(4, 12))
+        self._offset_x.insert(0, "0")
+
+        ctk.CTkLabel(offset_frame, text="Y:", font=ctk.CTkFont(size=11),
+                     text_color=SLATE_700).pack(side="left")
+        self._offset_y = ctk.CTkEntry(offset_frame, width=60, height=28,
+                                        font=ctk.CTkFont(size=11), placeholder_text="0")
+        self._offset_y.pack(side="left", padx=(4, 0))
+        self._offset_y.insert(0, "0")
+
+        # 버튼 영역
+        btn_frame1 = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame1.pack(fill="x", pady=(0, 4))
+
+        self._click_btn = ctk.CTkButton(
+            btn_frame1, text="이 단계 클릭 실행", height=38, corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=EMERALD_600, hover_color=EMERALD_500,
+            command=self._on_click_test,
+        )
+        self._click_btn.pack(fill="x")
+
+        btn_frame2 = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame2.pack(fill="x", pady=(0, 4))
+
+        self._recapture_btn = ctk.CTkButton(
+            btn_frame2, text="재캡처 (5초)", height=34, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=AMBER_500, hover_color="#d97706",
+            command=self._on_recapture,
+        )
+        self._recapture_btn.pack(side="left", expand=True, fill="x", padx=(0, 3))
+
+        self._next_btn = ctk.CTkButton(
+            btn_frame2, text="다음 단계 →", height=34, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=BLUE_500, hover_color="#2563eb",
+            command=self._on_next,
+        )
+        self._next_btn.pack(side="left", expand=True, fill="x", padx=(3, 0))
+
+    def _show_step(self):
+        # 건너뛸 단계 넘기기
+        while self.current_step < len(self.steps):
+            step = self.steps[self.current_step]
+            if step.get("skip") or step.get("name") == "data_check":
+                self.current_step += 1
+                continue
+            break
+
+        if self.current_step >= len(self.steps):
+            self._result_label.configure(text="모든 단계 테스트 완료!", text_color=EMERALD_600)
+            self._click_btn.configure(state="disabled")
+            self._recapture_btn.configure(state="disabled")
+            self._next_btn.configure(text="닫기", command=self._on_close)
+            return
+
+        step = self.steps[self.current_step]
+        total = len([s for s in self.steps if not s.get("skip") and s.get("name") != "data_check"])
+        active_idx = len([s for s in self.steps[:self.current_step]
+                         if not s.get("skip") and s.get("name") != "data_check"]) + 1
+
+        self._progress_label.configure(text=f"단계 {active_idx}/{total}")
+        self._progress_bar.set(active_idx / total)
+        self._step_label.configure(text=step["label"])
+        self._result_label.configure(text=f"좌표: ({step.get('x', '?')}, {step.get('y', '?')})",
+                                      text_color=SLATE_500)
+
+        # 오프셋 초기화
+        self._offset_x.delete(0, "end")
+        self._offset_x.insert(0, "0")
+        self._offset_y.delete(0, "end")
+        self._offset_y.insert(0, "0")
+
+        # 템플릿 이미지 표시
+        from dentweb_runner import _get_template_path
+        template_path = _get_template_path(step["name"])
+        if os.path.exists(template_path):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(template_path)
+                # 프레임 크기에 맞게 리사이즈
+                img.thumbnail((200, 70))
+                self._tk_image = ImageTk.PhotoImage(img)
+                self._image_label.configure(image=self._tk_image, text="")
+            except Exception:
+                self._image_label.configure(image=None, text="이미지 로드 실패")
+        else:
+            self._image_label.configure(image=None, text="템플릿 없음 (재캡처 필요)")
+
+        self._click_btn.configure(state="normal")
+        self._recapture_btn.configure(state="normal")
+
+    def _on_click_test(self):
+        """현재 단계의 이미지를 찾아 클릭"""
+        step = self.steps[self.current_step]
+        from dentweb_runner import _find_and_click
+
+        # 오프셋 적용
+        try:
+            ox = int(self._offset_x.get() or 0)
+            oy = int(self._offset_y.get() or 0)
+        except ValueError:
+            ox, oy = 0, 0
+
+        if ox != 0 or oy != 0:
+            # 오프셋이 있으면 좌표에 반영하고 저장
+            if step.get("x") is not None:
+                step["x"] += ox
+                step["y"] += oy
+                self._result_label.configure(
+                    text=f"오프셋 적용: ({step['x']}, {step['y']})", text_color=BLUE_500)
+                # 설정 저장
+                save_config_data({"data_steps": self.steps})
+
+        # topmost 해제하고 클릭
+        self.attributes("-topmost", False)
+        time.sleep(0.3)
+
+        result_msgs = []
+        def log_cb(msg):
+            result_msgs.append(msg)
+
+        success = _find_and_click(step, log_callback=log_cb)
+        time.sleep(0.5)
+
+        self.attributes("-topmost", True)
+        self.lift()
+
+        msg = "\n".join(result_msgs) if result_msgs else ("클릭 성공" if success else "클릭 실패")
+        color = EMERALD_600 if success else ROSE_500
+        self._result_label.configure(text=msg, text_color=color)
+
+    def _on_recapture(self):
+        """현재 단계 재캡처: 5초 카운트다운 후 마우스 위치 + 이미지 저장"""
+        self._recapture_btn.configure(state="disabled", text="카운트다운...")
+        self._click_btn.configure(state="disabled")
+        self._result_label.configure(text="5초 안에 해당 위치에 마우스를 올려주세요!",
+                                      text_color=AMBER_500)
+        threading.Thread(target=self._do_recapture, daemon=True).start()
+
+    def _do_recapture(self):
+        for remaining in range(5, 0, -1):
+            self.after(0, lambda r=remaining: self._result_label.configure(
+                text=f"{r}초... 해당 위치에 마우스를 올려주세요!", text_color=AMBER_500))
+            time.sleep(1)
+
+        x, y = pyautogui.position()
+        step = self.steps[self.current_step]
+        step["x"] = x
+        step["y"] = y
+
+        # 이미지 템플릿 캡처
+        _capture_template(x, y, step["name"])
+
+        # 설정 저장
+        save_config_data({"data_steps": self.steps})
+
+        self.after(0, lambda: self._result_label.configure(
+            text=f"재캡처 완료: ({x}, {y}) + 이미지 저장", text_color=EMERALD_600))
+        self.after(0, lambda: self._recapture_btn.configure(state="normal", text="재캡처 (5초)"))
+        self.after(0, lambda: self._click_btn.configure(state="normal"))
+        self.after(0, self._show_step)
+
+    def _on_next(self):
+        self.current_step += 1
+        self._show_step()
+
+    def _on_close(self):
+        self.callback()
         self.destroy()
 
 
