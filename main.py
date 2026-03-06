@@ -21,8 +21,23 @@ def _setup_dpi_awareness():
             pass
 
 
+def _cleanup_update_files():
+    """이전 업데이트에서 남은 임시 파일 정리"""
+    if not getattr(sys, "frozen", False):
+        return
+    base_dir = os.path.dirname(sys.executable)
+    for name in ("dentweb-agent-update.exe", "dentweb-agent-old.exe", "dentweb-agent-update.ps1"):
+        path = os.path.join(base_dir, name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+
 def main():
     _setup_dpi_awareness()
+    _cleanup_update_files()
 
     if len(sys.argv) > 1 and sys.argv[1] == "--startup":
         from config import toggle_startup
