@@ -31,7 +31,7 @@ def main():
     if not runner.is_configured():
         print()
         print("[안내] 덴트웹 클릭 좌표가 설정되지 않았습니다.")
-        print("자동화를 위해 덴트웹 화면의 버튼 위치를 학습해야 합니다.")
+        print("덴트웹을 먼저 열어주세요. (로그인 완료 상태)")
         print()
         runner.teach()
 
@@ -45,9 +45,9 @@ def main():
     print("  서버에서 실행 요청을 대기 중입니다...")
     print("  앱에서 '지금 실행 요청' 버튼을 누르면 자동으로 시작됩니다.")
     print()
-    print("  [단축키]")
-    print("  Ctrl+C  = 에이전트 종료")
-    print("  좌표 재설정 = config.json 옆의 dentweb_steps.json 삭제 후 재시작")
+    print("  * 덴트웹이 열려있어야 합니다 (자동으로 찾아서 활성화)")
+    print("  * Ctrl+C = 에이전트 종료")
+    print("  * 좌표 재설정 = dentweb_steps.json 삭제 후 재시작")
     print()
 
     while True:
