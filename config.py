@@ -10,7 +10,7 @@ DEFAULTS = {
     "server_url": SERVER_URL,
     "poll_interval_seconds": 30,
     "download_dir": os.path.join(os.path.expanduser("~"), "Downloads"),
-    "dentweb_window_title": "DentWeb",
+    "dentweb_window_title": "덴트웹",
     "click_delay_ms": 300,
     "download_timeout_seconds": 30,
     "max_retries": 3,
