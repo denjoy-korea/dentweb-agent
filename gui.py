@@ -16,9 +16,10 @@ from dentweb_runner import (
 )
 from logger import AgentLogger
 from startup import is_registered, register, unregister
+from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -232,6 +233,37 @@ class AgentApp(ctk.CTk):
             font=ctk.CTkFont(size=11), text_color=SLATE_400,
         ).pack(side="right")
 
+        # 업데이트 배너 (처음엔 숨김)
+        self._update_banner = ctk.CTkFrame(container, fg_color=EMERALD_50,
+                                           corner_radius=10, border_width=1,
+                                           border_color=EMERALD_100)
+        # pack 하지 않음 — 업데이트 발견 시 표시
+
+        banner_inner = ctk.CTkFrame(self._update_banner, fg_color="transparent")
+        banner_inner.pack(fill="x", padx=12, pady=8)
+
+        self._update_text = ctk.CTkLabel(
+            banner_inner, text="",
+            font=ctk.CTkFont(size=11), text_color=EMERALD_600,
+        )
+        self._update_text.pack(side="left", fill="x", expand=True)
+
+        self._update_btn = ctk.CTkButton(
+            banner_inner, text="업데이트", width=80, height=28, corner_radius=6,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=EMERALD_600, hover_color=EMERALD_500,
+            command=self._on_update_click,
+        )
+        self._update_btn.pack(side="right")
+
+        self._update_progress = ctk.CTkProgressBar(
+            self._update_banner, height=3, corner_radius=2,
+            fg_color=SLATE_200, progress_color=EMERALD_500,
+        )
+        # 다운로드 시에만 표시
+
+        self._pending_update = None  # {version, download_url}
+
         # 연결 상태 카드
         status_card = ctk.CTkFrame(container, fg_color=WHITE, corner_radius=12)
         status_card.pack(fill="x", pady=(0, 8))
@@ -333,6 +365,9 @@ class AgentApp(ctk.CTk):
             self._update_status("설정 필요", AMBER_500, "좌표 재설정을 눌러주세요")
         else:
             self._start_polling()
+
+        # 백그라운드 업데이트 확인
+        threading.Thread(target=self._check_for_updates, daemon=True).start()
 
     # ─── GUI 로그 ───
 
@@ -463,6 +498,63 @@ class AgentApp(ctk.CTk):
                 self._start_polling()
             else:
                 self._update_status("설정 필요", AMBER_500, "좌표 재설정을 눌러주세요")
+
+    # ─── Update ───
+
+    def _check_for_updates(self):
+        update_info = check_update(VERSION)
+        if update_info:
+            self.after(0, lambda: self._show_update_banner(update_info))
+
+    def _show_update_banner(self, update_info: dict):
+        self._pending_update = update_info
+        version = update_info["version"]
+        size_mb = update_info.get("size", 0) / 1024 / 1024
+        self._update_text.configure(
+            text=f"새 버전 {version} ({size_mb:.1f}MB)")
+        # 연결 상태 카드 위에 삽입
+        try:
+            status_card = self._status_dot.master.master  # status_inner → status_card
+            self._update_banner.pack(fill="x", pady=(0, 8), before=status_card)
+        except Exception:
+            self._update_banner.pack(fill="x", pady=(0, 8))
+        self._gui_log(f"업데이트 발견: {version}")
+
+    def _on_update_click(self):
+        if not self._pending_update:
+            return
+
+        self._update_btn.configure(state="disabled", text="다운로드 중...")
+        self._update_progress.set(0)
+        self._update_progress.pack(fill="x", padx=12, pady=(0, 8))
+
+        def do_download():
+            def on_progress(p):
+                self.after(0, lambda p=p: self._update_progress.set(p))
+
+            new_path = download_update(
+                self._pending_update["download_url"],
+                progress_callback=on_progress,
+            )
+
+            if new_path:
+                self.after(0, lambda: self._apply_downloaded_update(new_path))
+            else:
+                self.after(0, lambda: self._update_download_failed())
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def _apply_downloaded_update(self, new_exe_path: str):
+        self._update_btn.configure(text="재시작 중...")
+        self._gui_log("업데이트 다운로드 완료 — 재시작합니다")
+        self.polling = False
+        self.update()
+        apply_update(new_exe_path)
+
+    def _update_download_failed(self):
+        self._update_btn.configure(state="normal", text="재시도")
+        self._update_progress.pack_forget()
+        self._gui_log("업데이트 다운로드 실패", "ERROR")
 
     # ─── Startup Toggle ───
 
