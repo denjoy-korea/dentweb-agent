@@ -2,6 +2,7 @@
 
 import os
 import sys
+import subprocess
 import tempfile
 import requests
 
@@ -33,7 +34,6 @@ def check_update(current_version: str) -> dict | None:
         if latest <= current:
             return None
 
-        # exe 에셋 찾기
         for asset in data.get("assets", []):
             if asset["name"].endswith(".exe"):
                 return {
@@ -49,7 +49,6 @@ def check_update(current_version: str) -> dict | None:
 def download_update(download_url: str, progress_callback=None) -> str | None:
     """새 exe를 현재 exe 옆에 다운로드 → 경로 반환."""
     try:
-        # 현재 exe와 같은 디렉토리에 저장 (드라이브 간 이동 문제 방지)
         if getattr(sys, "frozen", False):
             target_dir = os.path.dirname(sys.executable)
         else:
@@ -57,7 +56,7 @@ def download_update(download_url: str, progress_callback=None) -> str | None:
 
         download_path = os.path.join(target_dir, "dentweb-agent-update.exe")
 
-        # 이전 다운로드 잔여 파일 정리
+        # 이전 잔여 파일 정리
         for old in ("dentweb-agent-update.exe", "dentweb-agent-old.exe"):
             old_path = os.path.join(target_dir, old)
             if os.path.exists(old_path):
@@ -91,61 +90,60 @@ def download_update(download_url: str, progress_callback=None) -> str | None:
 
 
 def apply_update(new_exe_path: str):
-    """현재 exe를 교체하고 재시작 (배치 스크립트 사용)."""
+    """현재 exe를 교체하고 재시작 (PowerShell 사용)."""
     if not getattr(sys, "frozen", False):
         return
 
     current_exe = sys.executable
     current_dir = os.path.dirname(current_exe)
-    current_name = os.path.basename(current_exe)
-    old_name = "dentweb-agent-old.exe"
-    new_name = os.path.basename(new_exe_path)
-    bat_path = os.path.join(current_dir, "dentweb-agent-update.bat")
+    ps_path = os.path.join(current_dir, "dentweb-agent-update.ps1")
 
-    # 배치 스크립트:
-    # 1. 현재 프로세스 종료 대기
-    # 2. 현재 exe → old로 이름변경 (delete보다 안전)
-    # 3. 새 exe → 현재 이름으로 이름변경
-    # 4. 새 exe 실행
-    # 5. old exe 삭제 + 자기 삭제
-    bat_content = f'''@echo off
-chcp 65001 >nul
-echo 업데이트 적용 중...
-timeout /t 3 /nobreak >nul
+    # PowerShell 스크립트: 프로세스 종료 대기 → 복사로 교체 → 재시작
+    ps_content = f'''
+$ErrorActionPreference = "Stop"
+$currentExe = "{current_exe}"
+$newExe = "{new_exe_path}"
+$oldExe = "{os.path.join(current_dir, 'dentweb-agent-old.exe')}"
+$pid = {os.getpid()}
 
-:wait_exit
-tasklist /FI "IMAGENAME eq {current_name}" 2>nul | find /I "{current_name}" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait_exit
-)
+# 1. 현재 프로세스 종료 대기
+Write-Host "업데이트 적용 중... 프로세스 종료 대기"
+try {{
+    Wait-Process -Id $pid -Timeout 15 -ErrorAction SilentlyContinue
+}} catch {{
+    Start-Sleep -Seconds 3
+}}
+Start-Sleep -Seconds 2
 
-if exist "{old_name}" del /f "{old_name}" >nul 2>&1
-rename "{current_name}" "{old_name}"
-if errorlevel 1 (
-    echo 이름 변경 실패. 수동으로 업데이트하세요.
-    pause
-    exit /b 1
-)
-rename "{new_name}" "{current_name}"
-if errorlevel 1 (
-    rename "{old_name}" "{current_name}"
-    echo 업데이트 실패. 원래 버전으로 복원했습니다.
-    pause
-    exit /b 1
-)
+# 2. 현재 exe 백업
+if (Test-Path $oldExe) {{ Remove-Item $oldExe -Force -ErrorAction SilentlyContinue }}
+if (Test-Path $currentExe) {{
+    Move-Item $currentExe $oldExe -Force
+}}
 
-timeout /t 1 /nobreak >nul
-start "" "{current_exe}"
-timeout /t 2 /nobreak >nul
-del /f "{old_name}" >nul 2>&1
-del /f "%~f0"
+# 3. 새 exe로 교체
+Copy-Item $newExe $currentExe -Force
+
+# 4. 새 exe 실행
+Start-Process $currentExe
+
+# 5. 정리
+Start-Sleep -Seconds 3
+Remove-Item $newExe -Force -ErrorAction SilentlyContinue
+Remove-Item $oldExe -Force -ErrorAction SilentlyContinue
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '''
 
-    with open(bat_path, "w", encoding="utf-8") as f:
-        f.write(bat_content)
+    with open(ps_path, "w", encoding="utf-8") as f:
+        f.write(ps_content)
 
-    # bat를 exe와 같은 디렉토리에서 실행
-    os.chdir(current_dir)
-    os.startfile(bat_path)
+    # PowerShell 실행 (창 숨김, 실행 정책 우회)
+    subprocess.Popen(
+        [
+            "powershell", "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden",
+            "-File", ps_path,
+        ],
+        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+    )
     sys.exit(0)
