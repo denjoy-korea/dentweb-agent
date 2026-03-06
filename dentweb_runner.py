@@ -38,6 +38,19 @@ def _paste_text(text: str):
     time.sleep(0.1)
 
 
+def _win32_click(x: int, y: int):
+    """Windows API로 직접 마우스 클릭 (pyautogui보다 확실함)"""
+    import ctypes
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    ctypes.windll.user32.SetCursorPos(int(x), int(y))
+    time.sleep(0.3)
+    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    time.sleep(0.1)
+    ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(0.2)
+
+
 # --- 클릭 시퀀스 정의 ---
 
 DATA_STEPS = [
@@ -92,10 +105,7 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
             if location:
                 cx, cy = location
                 _log(f"이미지 발견: {step['label']} → 클릭 ({cx}, {cy})")
-                pyautogui.moveTo(cx, cy)
-                time.sleep(0.3)
-                pyautogui.click()
-                time.sleep(0.2)
+                _win32_click(cx, cy)
                 return True
             else:
                 _log(f"이미지 못 찾음: {step['label']} — 좌표 폴백 시도")
@@ -105,10 +115,7 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
     # 2차: 저장된 좌표로 폴백
     if step.get("x") is not None and step.get("y") is not None:
         _log(f"좌표 폴백: {step['label']} ({step['x']}, {step['y']})")
-        pyautogui.moveTo(step["x"], step["y"])
-        time.sleep(0.3)
-        pyautogui.click()
-        time.sleep(0.2)
+        _win32_click(step["x"], step["y"])
         return True
 
     _log(f"클릭 실패: {step['label']} — 이미지도 좌표도 없음")
