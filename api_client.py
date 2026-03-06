@@ -13,6 +13,17 @@ class ApiClient:
             "Content-Type": "application/json",
         }
 
+    def ping(self) -> dict:
+        """연결 확인 전용 (claim 없이 상태만 조회)"""
+        resp = requests.post(
+            self.automation_url,
+            json={"action": "get_state"},
+            headers=self.headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def claim_run(self) -> dict:
         resp = requests.post(
             self.automation_url,

@@ -19,7 +19,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "2.3.2"
+VERSION = "2.3.3"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -408,9 +408,9 @@ class AgentApp(ctk.CTk):
     def _poll_loop(self):
         poll_interval = self.cfg.get("poll_interval_seconds", 30)
 
-        # 초기 연결 확인
+        # 초기 연결 확인 (claim 없이 상태만 조회)
         try:
-            self.api.claim_run()
+            self.api.ping()
             self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
             self.after(0, lambda: self._gui_log("서버 연결 성공"))
         except Exception as e:
