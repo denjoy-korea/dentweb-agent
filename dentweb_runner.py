@@ -39,15 +39,43 @@ def _paste_text(text: str):
 
 
 def _win32_click(x: int, y: int):
-    """Windows API로 직접 마우스 클릭 (pyautogui보다 확실함)"""
+    """3중 클릭: PostMessage + mouse_event + pyautogui 모두 시도"""
     import ctypes
+    from ctypes import wintypes
+
+    ix, iy = int(x), int(y)
+
+    # 1. 마우스 커서 이동
+    ctypes.windll.user32.SetCursorPos(ix, iy)
+    time.sleep(0.3)
+
+    # --- 방법 1: PostMessage (창에 직접 메시지 전송) ---
+    point = wintypes.POINT(ix, iy)
+    hwnd = ctypes.windll.user32.WindowFromPoint(point)
+    if hwnd:
+        client_point = wintypes.POINT(ix, iy)
+        ctypes.windll.user32.ScreenToClient(hwnd, ctypes.byref(client_point))
+        lparam = (client_point.y << 16) | (client_point.x & 0xFFFF)
+        WM_LBUTTONDOWN = 0x0201
+        WM_LBUTTONUP = 0x0202
+        MK_LBUTTON = 0x0001
+        ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+        time.sleep(0.1)
+        ctypes.windll.user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lparam)
+    time.sleep(0.3)
+
+    # --- 방법 2: mouse_event (하드웨어 수준) ---
+    ctypes.windll.user32.SetCursorPos(ix, iy)
+    time.sleep(0.1)
     MOUSEEVENTF_LEFTDOWN = 0x0002
     MOUSEEVENTF_LEFTUP = 0x0004
-    ctypes.windll.user32.SetCursorPos(int(x), int(y))
-    time.sleep(0.3)
     ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
     time.sleep(0.1)
     ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(0.3)
+
+    # --- 방법 3: pyautogui (SendInput) ---
+    pyautogui.click(ix, iy)
     time.sleep(0.2)
 
 
