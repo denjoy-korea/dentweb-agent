@@ -3,10 +3,11 @@
 import sys
 import time
 import traceback
-from config import load_config
+from config import load_config, toggle_startup
 from api_client import ApiClient
 from dentweb_runner import DentwebRunner
 from logger import AgentLogger
+from startup import is_registered
 
 
 def main():
@@ -48,6 +49,9 @@ def main():
     print("  * 덴트웹이 열려있어야 합니다 (자동으로 찾아서 활성화)")
     print("  * Ctrl+C = 에이전트 종료")
     print("  * 좌표 재설정 = dentweb_steps.json 삭제 후 재시작")
+
+    startup_status = "등록됨" if is_registered() else "미등록"
+    print(f"  * 시작프로그램: {startup_status}")
     print()
 
     while True:
@@ -103,4 +107,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--startup":
+        toggle_startup()
+    else:
+        main()

@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from startup import is_registered, register, unregister
 
 SERVER_URL = "https://qhoyaonrkagdngglrcas.supabase.co/functions/v1"
 
@@ -41,6 +42,10 @@ def _interactive_setup(path: str) -> dict:
 
     print()
     print(f"설정이 저장되었습니다: {os.path.abspath(path)}")
+
+    # 시작프로그램 등록 여부
+    _ask_startup_registration()
+
     print("에이전트를 시작합니다...")
     print()
     return cfg
@@ -63,3 +68,43 @@ def load_config(path: str = "config.json") -> dict:
 
     cfg["server_url"] = cfg["server_url"].rstrip("/")
     return cfg
+
+
+def _ask_startup_registration():
+    """시작프로그램 등록 여부를 사용자에게 묻기"""
+    if sys.platform != "win32":
+        return
+
+    if is_registered():
+        print("시작프로그램: 이미 등록되어 있습니다.")
+        return
+
+    print()
+    print("컴퓨터를 켤 때 에이전트를 자동으로 실행하시겠습니까?")
+    answer = input("시작프로그램 등록 (Y/n): ").strip().lower()
+    if answer in ("", "y", "yes"):
+        if register():
+            print("시작프로그램에 등록되었습니다. PC 부팅 시 자동 실행됩니다.")
+        else:
+            print("시작프로그램 등록에 실패했습니다. 수동으로 등록해주세요.")
+    else:
+        print("시작프로그램 등록을 건너뜁니다.")
+    print()
+
+
+def toggle_startup():
+    """시작프로그램 등록/해제 토글"""
+    if sys.platform != "win32":
+        print("[안내] Windows에서만 시작프로그램 등록이 가능합니다.")
+        return
+
+    if is_registered():
+        if unregister():
+            print("시작프로그램에서 제거되었습니다.")
+        else:
+            print("시작프로그램 제거에 실패했습니다.")
+    else:
+        if register():
+            print("시작프로그램에 등록되었습니다.")
+        else:
+            print("시작프로그램 등록에 실패했습니다.")
