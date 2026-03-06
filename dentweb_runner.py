@@ -77,6 +77,19 @@ def save_config_data(data: dict, path: str = STEPS_FILE):
 
 # --- 학습 모드 ---
 
+CAPTURE_DELAY = 5  # 마우스 위치 캡처까지 대기 시간(초)
+
+
+def _countdown_capture() -> tuple[int, int]:
+    """카운트다운 후 마우스 위치 캡처 (덴트웹 창이 포커스 상태여도 동작)"""
+    for remaining in range(CAPTURE_DELAY, 0, -1):
+        print(f"\r  → {remaining}초 후 마우스 위치 저장...", end="", flush=True)
+        time.sleep(1)
+    x, y = pyautogui.position()
+    print(f"\r  → 저장됨: ({x}, {y})              ")
+    return x, y
+
+
 def _teach_steps(steps: list[dict], group_label: str) -> list[dict]:
     print(f"\n--- {group_label} ---\n")
     result = json.loads(json.dumps(steps))
@@ -88,14 +101,15 @@ def _teach_steps(steps: list[dict], group_label: str) -> list[dict]:
         print(f"[{i + 1}/{len(result)}] {step['label']}")
 
         if step_type in ("text_input", "password_input"):
-            print(f"  → 입력 필드를 클릭할 위치에 마우스를 올려주세요.")
+            print(f"  → 입력 필드 위치에 마우스를 올려주세요.")
         elif step.get("group") == "check":
             print(f"  → 데이터가 표시되는 영역(첫 번째 행)에 마우스를 올려주세요.")
             print(f"    (비어있으면 엑셀저장을 건너뜁니다)")
         else:
             print(f"  → 해당 위치에 마우스를 올려주세요.")
 
-        choice = input("  → Enter=저장 / s=건너뛰기 / r=처음부터: ").strip().lower()
+        print(f"  → 옵션: Enter={CAPTURE_DELAY}초 카운트다운 시작 / s=건너뛰기 / r=처음부터")
+        choice = input("  → ").strip().lower()
 
         if choice == "r":
             result = json.loads(json.dumps(steps))
@@ -109,11 +123,12 @@ def _teach_steps(steps: list[dict], group_label: str) -> list[dict]:
             i += 1
             continue
 
-        x, y = pyautogui.position()
+        # Enter 누른 후 카운트다운 → 덴트웹으로 전환할 시간
+        print(f"  → 지금 덴트웹에서 '{step['label']}' 위에 마우스를 올려주세요!")
+        x, y = _countdown_capture()
         result[i]["x"] = x
         result[i]["y"] = y
         result[i]["skip"] = False
-        print(f"  → 저장됨: ({x}, {y})")
         print()
         i += 1
 
