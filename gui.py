@@ -54,6 +54,7 @@ class AgentApp(ctk.CTk):
         self.geometry("440x620")
         self.resizable(False, False)
         self.configure(fg_color=SLATE_50)
+        self.attributes("-topmost", True)
 
         # 아이콘 (있으면)
         icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
@@ -434,9 +435,11 @@ class AgentApp(ctk.CTk):
                     time.sleep(poll_interval)
                     continue
 
-                # 자동화 실행
+                # 자동화 실행 — topmost 해제 (덴트웹 클릭 방해 방지)
+                self.after(0, lambda: self.attributes("-topmost", False))
                 self.after(0, lambda: self._gui_log("덴트웹 자동화 시작..."))
                 excel_path = self.runner.download_excel()
+                self.after(0, lambda: self.attributes("-topmost", True))
 
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
