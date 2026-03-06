@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.2.4"
+VERSION = "3.3.0"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -986,8 +986,14 @@ class TestWindow(ctk.CTkToplevel):
 
     def _on_click_test(self):
         """현재 단계의 이미지를 찾아 클릭"""
+        self._click_btn.configure(state="disabled", text="클릭 중...")
+        self._result_label.configure(text="덴트웹 활성화 후 클릭합니다...", text_color=SLATE_500)
+        self.update()
+        threading.Thread(target=self._do_click_test, daemon=True).start()
+
+    def _do_click_test(self):
         step = self.steps[self.current_step]
-        from dentweb_runner import _find_and_click
+        from dentweb_runner import _find_and_click, DentwebRunner
 
         # 오프셋 적용
         try:
@@ -997,32 +1003,38 @@ class TestWindow(ctk.CTkToplevel):
             ox, oy = 0, 0
 
         if ox != 0 or oy != 0:
-            # 오프셋이 있으면 좌표에 반영하고 저장
             if step.get("x") is not None:
                 step["x"] += ox
                 step["y"] += oy
-                self._result_label.configure(
-                    text=f"오프셋 적용: ({step['x']}, {step['y']})", text_color=BLUE_500)
-                # 설정 저장
                 save_config_data({"data_steps": self.steps})
 
-        # topmost 해제하고 클릭
-        self.attributes("-topmost", False)
-        time.sleep(0.3)
+        # 1. 테스트 창 topmost 해제
+        self.after(0, lambda: self.attributes("-topmost", False))
+        time.sleep(0.5)
 
+        # 2. 덴트웹 창을 포그라운드로 활성화
+        runner = DentwebRunner(self.parent_app.cfg)
         result_msgs = []
         def log_cb(msg):
             result_msgs.append(msg)
 
-        success = _find_and_click(step, log_callback=log_cb)
-        time.sleep(0.5)
+        runner._activate_dentweb(log_callback=log_cb)
+        time.sleep(1)
 
-        self.attributes("-topmost", True)
-        self.lift()
+        # 3. 클릭
+        success = _find_and_click(step, log_callback=log_cb)
+
+        # 4. 3초 대기 (덴트웹 화면 전환 확인용)
+        time.sleep(3)
+
+        # 5. 테스트 창 복원
+        self.after(0, lambda: self.attributes("-topmost", True))
+        self.after(0, lambda: self.lift())
 
         msg = "\n".join(result_msgs) if result_msgs else ("클릭 성공" if success else "클릭 실패")
         color = EMERALD_600 if success else ROSE_500
-        self._result_label.configure(text=msg, text_color=color)
+        self.after(0, lambda: self._result_label.configure(text=msg, text_color=color))
+        self.after(0, lambda: self._click_btn.configure(state="normal", text="이 단계 클릭 실행"))
 
     def _on_recapture(self):
         """현재 단계 재캡처: 5초 카운트다운 후 마우스 위치 + 이미지 저장"""
