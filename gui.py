@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.2.3"
+VERSION = "3.2.4"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
