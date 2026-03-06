@@ -41,14 +41,14 @@ def _paste_text(text: str):
 # --- 클릭 시퀀스 정의 ---
 
 DATA_STEPS = [
-    {"name": "stats_menu", "label": "상단 '경영/통계' 아이콘", "x": None, "y": None, "wait_after": 3.0},
-    {"name": "implant_tab", "label": "왼쪽 사이드바 '임플란트 수술 통계'", "x": None, "y": None, "wait_after": 3.0},
-    {"name": "custom_period", "label": "'특정기간' 라디오 버튼", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "date_start_field", "label": "'부터' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 5.0},
-    {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "stats_menu", "label": "상단 '경영/통계' 아이콘", "x": None, "y": None, "wait_after": 5.0},
+    {"name": "implant_tab", "label": "왼쪽 사이드바 '임플란트 수술 통계'", "x": None, "y": None, "wait_after": 5.0},
+    {"name": "custom_period", "label": "'특정기간' 라디오 버튼", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "date_start_field", "label": "'부터' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 8.0},
+    {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 5.0},
 ]
 
 
@@ -92,7 +92,10 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
             if location:
                 cx, cy = location
                 _log(f"이미지 발견: {step['label']} → 클릭 ({cx}, {cy})")
-                pyautogui.click(cx, cy)
+                pyautogui.moveTo(cx, cy)
+                time.sleep(0.3)
+                pyautogui.click()
+                time.sleep(0.2)
                 return True
             else:
                 _log(f"이미지 못 찾음: {step['label']} — 좌표 폴백 시도")
@@ -102,7 +105,10 @@ def _find_and_click(step: dict, log_callback=None, confidence: float = 0.8) -> b
     # 2차: 저장된 좌표로 폴백
     if step.get("x") is not None and step.get("y") is not None:
         _log(f"좌표 폴백: {step['label']} ({step['x']}, {step['y']})")
-        pyautogui.click(step["x"], step["y"])
+        pyautogui.moveTo(step["x"], step["y"])
+        time.sleep(0.3)
+        pyautogui.click()
+        time.sleep(0.2)
         return True
 
     _log(f"클릭 실패: {step['label']} — 이미지도 좌표도 없음")
@@ -331,8 +337,8 @@ class DentwebRunner:
         if not self._activate_dentweb(log_callback=log_callback):
             _log("덴트웹 창을 찾을 수 없습니다")
             return None
-        _log("덴트웹 창 활성화 완료 — 2초 대기")
-        time.sleep(2)
+        _log("덴트웹 창 활성화 완료 — 3초 대기")
+        time.sleep(3)
 
         # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
         for step in self._data.get("data_steps", []):
