@@ -32,14 +32,14 @@ def _paste_text(text: str):
 # --- 클릭 시퀀스 정의 ---
 
 DATA_STEPS = [
-    {"name": "stats_menu", "label": "상단 '경영/통계' 아이콘", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "implant_tab", "label": "왼쪽 사이드바 '임플란트 수술 통계'", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "custom_period", "label": "'특정기간' 라디오 버튼", "x": None, "y": None, "wait_after": 0.5},
-    {"name": "date_start_field", "label": "'부터' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 0.5},
-    {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 0.5},
-    {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 0.5},
-    {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 3.0},
-    {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 2.0},
+    {"name": "stats_menu", "label": "상단 '경영/통계' 아이콘", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "implant_tab", "label": "왼쪽 사이드바 '임플란트 수술 통계'", "x": None, "y": None, "wait_after": 3.0},
+    {"name": "custom_period", "label": "'특정기간' 라디오 버튼", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "date_start_field", "label": "'부터' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "date_start_today", "label": "'부터' 달력 하단 '오늘' 버튼", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 5.0},
+    {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 3.0},
 ]
 
 
@@ -247,7 +247,8 @@ class DentwebRunner:
         if not self._activate_dentweb():
             _log("덴트웹 창을 찾을 수 없습니다")
             return None
-        _log("덴트웹 창 활성화 완료")
+        _log("덴트웹 창 활성화 완료 — 2초 대기")
+        time.sleep(2)  # 창 활성화 후 안정화 대기
 
         # 2. 날짜 선택 시퀀스 (엑셀저장 전까지)
         for step in self._data.get("data_steps", []):
@@ -279,15 +280,15 @@ class DentwebRunner:
         save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
         _log("저장 다이얼로그 처리 중...")
         pyautogui.hotkey("alt", "n")  # 파일 이름 필드 포커스
-        time.sleep(0.3)
+        time.sleep(0.5)
         pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.1)
-        _paste_text(save_path)
         time.sleep(0.3)
+        _paste_text(save_path)
+        time.sleep(0.5)
         pyautogui.press("enter")
 
         # 5. 덮어쓰기 확인 → Enter
-        time.sleep(1)
+        time.sleep(2)
         pyautogui.press("enter")
 
         # 6. 파일 저장 대기
