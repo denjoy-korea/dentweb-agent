@@ -336,6 +336,16 @@ class AgentApp(ctk.CTk):
         )
         self._log_text.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
+        # 지금 실행 버튼
+        self._run_now_btn = ctk.CTkButton(
+            container, text="▶  지금 실행", height=42, corner_radius=8,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=EMERALD_600, hover_color="#047857",
+            text_color=WHITE,
+            command=self._on_run_now_click,
+        )
+        self._run_now_btn.pack(fill="x", pady=(0, 6))
+
         # 하단 버튼 영역
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(0, 4))
@@ -518,6 +528,55 @@ class AgentApp(ctk.CTk):
         self.lift()
 
     # ─── Teach Mode (GUI) ───
+
+    def _on_run_now_click(self):
+        if not self.runner or not self.runner.is_configured():
+            self._gui_log("좌표 설정을 먼저 해주세요", "ERROR")
+            return
+        if not self.polling:
+            self._gui_log("서버 연결 후 실행해주세요", "ERROR")
+            return
+
+        self._run_now_btn.configure(state="disabled", text="실행 중...")
+        self._update_status("실행 중", BLUE_500, "자동화 진행 중...")
+
+        def do_run():
+            self.after(0, lambda: self._prepare_for_automation())
+            time.sleep(0.5)
+            self.after(0, lambda: self._gui_log("덴트웹 자동화 시작... (수동)"))
+            excel_path = self.runner.download_excel(
+                log_callback=lambda msg: self.after(0, lambda m=msg: self._gui_log(m))
+            )
+            self.after(0, lambda: self._restore_after_automation())
+
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            if not excel_path:
+                self.after(0, lambda: self._gui_log("오늘 수술 기록 없음"))
+                self.after(0, lambda t=now_str: self._update_last_run(t, "데이터 없음", SLATE_500))
+                self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
+                self.after(0, lambda: self._run_now_btn.configure(state="normal", text="▶  지금 실행"))
+                return
+
+            upload_url = f"{self.cfg['server_url']}/dentweb-upload"
+            upload_result = self.api.upload_file(upload_url, excel_path)
+
+            if upload_result.get("success"):
+                inserted = upload_result.get("inserted", 0)
+                skipped = upload_result.get("skipped", 0)
+                msg = f"{inserted}건 업로드, {skipped}건 스킵"
+                self.after(0, lambda m=msg: self._gui_log(f"완료: {m}"))
+                self.after(0, lambda t=now_str, m=msg: self._update_last_run(t, f"성공 — {m}", EMERALD_600))
+            else:
+                error_msg = upload_result.get("error", "업로드 실패")
+                self.after(0, lambda e=error_msg: self._gui_log(f"업로드 실패: {e}", "ERROR"))
+                self.after(0, lambda t=now_str, e=error_msg: self._update_last_run(t, f"실패 — {e}", ROSE_500))
+
+            self.runner.cleanup(excel_path)
+            self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
+            self.after(0, lambda: self._run_now_btn.configure(state="normal", text="▶  지금 실행"))
+
+        threading.Thread(target=do_run, daemon=True).start()
 
     def _on_teach_click(self):
         self.polling = False
