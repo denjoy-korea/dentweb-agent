@@ -401,9 +401,12 @@ class DentwebRunner:
         # 4. "다른 이름으로 저장" 다이얼로그 처리
         _log("저장 다이얼로그 처리 중...")
 
-        # 4a. '덴트웹 에이전트' 폴더 더블클릭
+        # 4a. 저장 다이얼로그 활성화(단일 클릭) 후 '덴트웹 에이전트' 폴더 더블클릭
         agent_step = self._get_save_step("save_dialog_agent_folder")
         if agent_step:
+            _log("저장 창 활성화 (단일 클릭)")
+            pyautogui.click(int(agent_step["x"]), int(agent_step["y"]))
+            time.sleep(0.5)
             _log("'덴트웹 에이전트' 폴더 더블클릭")
             pyautogui.doubleClick(int(agent_step["x"]), int(agent_step["y"]))
             time.sleep(agent_step.get("wait_after", 1.5))
