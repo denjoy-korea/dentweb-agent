@@ -426,22 +426,25 @@ class DentwebRunner:
         _log("저장 다이얼로그 처리 중...")
 
         # 4a. 저장 다이얼로그 활성화(단일 클릭) 후 '덴트웹 에이전트' 폴더 더블클릭
+        # 주의: 활성화 클릭 후 Windows 더블클릭 임계값(~500ms)보다 길게 대기해야
+        #       이름 바꾸기 모드로 진입하지 않음
         agent_step = self._get_save_step("save_dialog_agent_folder")
         if agent_step:
+            ax, ay = int(agent_step["x"]), int(agent_step["y"])
             _log("저장 창 활성화 (단일 클릭)")
-            pyautogui.click(int(agent_step["x"]), int(agent_step["y"]))
-            time.sleep(0.5)
+            pyautogui.click(ax, ay)
+            time.sleep(0.8)  # Windows 더블클릭 임계값보다 충분히 길게 대기
             _log("'덴트웹 에이전트' 폴더 더블클릭")
-            pyautogui.doubleClick(int(agent_step["x"]), int(agent_step["y"]))
+            pyautogui.doubleClick(ax, ay, interval=0.1)  # 빠른 더블클릭
             time.sleep(agent_step.get("wait_after", 1.5))
         else:
             _log("[경고] 덴트웹 에이전트 폴더 좌표 미설정 — 폴더 탐색 생략")
 
-        # 4b. 'exports' 폴더 더블클릭
+        # 4b. 'exports' 폴더 더블클릭 (이미 포커스 있으므로 바로 더블클릭)
         exports_step = self._get_save_step("save_dialog_exports_folder")
         if exports_step:
             _log("'exports' 폴더 더블클릭")
-            pyautogui.doubleClick(int(exports_step["x"]), int(exports_step["y"]))
+            pyautogui.doubleClick(int(exports_step["x"]), int(exports_step["y"]), interval=0.1)
             time.sleep(exports_step.get("wait_after", 1.5))
         else:
             _log("[경고] exports 폴더 좌표 미설정 — 폴더 탐색 생략")
