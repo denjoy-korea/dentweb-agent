@@ -21,7 +21,8 @@ def _setup_dpi_awareness():
             pass
 
 
-def _cleanup_update_files():
+def _cleanup_update_files()
+    _ensure_exports_dir():
     """이전 업데이트에서 남은 임시 파일 정리"""
     if not getattr(sys, "frozen", False):
         return
@@ -35,9 +36,19 @@ def _cleanup_update_files():
             pass
 
 
+def _ensure_exports_dir():
+    """EXE 옆 exports/ 폴더 자동 생성"""
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(os.path.join(base, "exports"), exist_ok=True)
+
+
 def main():
     _setup_dpi_awareness()
     _cleanup_update_files()
+    _ensure_exports_dir()
 
     if len(sys.argv) > 1 and sys.argv[1] == "--startup":
         from config import toggle_startup
