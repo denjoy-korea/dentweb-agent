@@ -21,8 +21,7 @@ def _setup_dpi_awareness():
             pass
 
 
-def _cleanup_update_files()
-    _ensure_exports_dir():
+def _cleanup_update_files():
     """이전 업데이트에서 남은 임시 파일 정리"""
     if not getattr(sys, "frozen", False):
         return
