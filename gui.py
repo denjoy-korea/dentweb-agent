@@ -504,48 +504,24 @@ class AgentApp(ctk.CTk):
         self.after(0, lambda: self._gui_log("서버 폴링 시작"))
 
     @staticmethod
-    def _smart_poll_interval(state: dict | None) -> int:
-        """예정 시간까지 남은 시간에 따라 폴링 간격 결정.
-        - 예정 시간 10분 이내 또는 수동 요청 대기 중: 30초
-        - 그 외: 5분 (300초)
-        """
-        NEAR_SECONDS = 30
-        FAR_SECONDS = 300
-        WINDOW_SECONDS = 10 * 60  # 10분
-
-        if not state:
-            return FAR_SECONDS
-
-        # 수동 실행 요청 대기 중이면 빠른 폴링
-        if state.get("manual_run_requested"):
-            return NEAR_SECONDS
-
-        if not state.get("enabled"):
-            return FAR_SECONDS
-
-        scheduled = state.get("scheduled_time", "")
-        if not scheduled or len(scheduled) != 5:
-            return FAR_SECONDS
-
+    def _seconds_until_scheduled(scheduled_time: str) -> float:
+        """KST 기준 다음 실행 예정 시각까지 남은 초 반환"""
         try:
-            h, m = map(int, scheduled.split(":"))
-        except ValueError:
-            return FAR_SECONDS
+            h, m = map(int, scheduled_time.split(":"))
+        except (ValueError, AttributeError):
+            return 600  # 파싱 실패 시 10분 후 재시도
 
         now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-        sched_today = now_kst.replace(hour=h, minute=m, second=0, microsecond=0)
-        secs_until = (sched_today - now_kst).total_seconds()
-
-        # 이미 지났으면 내일 기준으로
-        if secs_until < 0:
-            secs_until += 86400
-
-        return NEAR_SECONDS if secs_until <= WINDOW_SECONDS else FAR_SECONDS
+        sched = now_kst.replace(hour=h, minute=m, second=0, microsecond=0)
+        secs = (sched - now_kst).total_seconds()
+        if secs < 0:
+            secs += 86400  # 이미 지났으면 내일
+        return secs
 
     def _poll_loop(self):
         last_state: dict | None = None
 
-        # 초기 연결 확인 (claim 없이 상태만 조회)
+        # 초기 연결 확인
         try:
             self.api.ping()
             self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
@@ -557,9 +533,21 @@ class AgentApp(ctk.CTk):
         while self.polling:
             try:
                 result = self.api.claim_run()
-                last_state = result.get("state")
+                last_state = result.get("state") or {}
                 if not result.get("should_run"):
-                    time.sleep(self._smart_poll_interval(last_state))
+                    # 수동 요청 대기 중이면 30초, 아니면 예정 시각 직전까지 sleep
+                    if last_state.get("manual_run_requested"):
+                        time.sleep(30)
+                    else:
+                        scheduled = last_state.get("scheduled_time", "")
+                        secs = self._seconds_until_scheduled(scheduled) if scheduled else 600
+                        # 예정 시각 2분 전부터는 30초 간격으로 전환
+                        sleep_secs = 30 if secs <= 120 else min(secs - 60, 600)
+                        self.after(0, lambda s=sleep_secs: self._update_status(
+                            "서버 연결됨", EMERALD_500,
+                            f"대기 중 (다음 확인 {s//60}분 후)" if s >= 60 else "대기 중"
+                        ))
+                        time.sleep(sleep_secs)
                     continue
 
                 reason = result.get("reason", "")
@@ -570,7 +558,7 @@ class AgentApp(ctk.CTk):
                     self.api.report_run("failed", "클릭 좌표 미설정")
                     self.after(0, lambda: self._gui_log("클릭 좌표 미설정", "ERROR"))
                     self.after(0, lambda: self._update_status("설정 필요", AMBER_500))
-                    time.sleep(self._smart_poll_interval(last_state))
+                    time.sleep(30)
                     continue
 
                 # 자동화 실행 — topmost 해제 + 화면 우하단으로 이동 (덴트웹 클릭 방해 방지)
@@ -590,7 +578,7 @@ class AgentApp(ctk.CTk):
                     self.after(0, lambda t=now_str: self._update_last_run(
                         t, "데이터 없음", SLATE_500))
                     self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
-                    time.sleep(self._smart_poll_interval(last_state))
+                    time.sleep(30)
                     continue
 
                 # 업로드
@@ -622,7 +610,7 @@ class AgentApp(ctk.CTk):
                 except Exception:
                     pass
 
-            time.sleep(self._smart_poll_interval(last_state))
+            time.sleep(30)
 
     # ─── Automation Window Management ───
 
