@@ -104,65 +104,62 @@ class AgentApp(ctk.CTk):
             json.dump(cfg, f, indent=2, ensure_ascii=False)
         self.cfg = cfg
 
-    # ─── Setup Screen ───
+    # ─── Onboarding ───
+
+    def _make_step_indicator(self, parent, current: int, total: int):
+        """단계 표시 (● ● ○ ...)"""
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.pack(pady=(0, 20))
+        for i in range(1, total + 1):
+            color = EMERALD_500 if i <= current else SLATE_200
+            ctk.CTkLabel(f, text="●", font=ctk.CTkFont(size=10),
+                         text_color=color).pack(side="left", padx=3)
 
     def _show_setup_screen(self):
+        """온보딩 1단계: 토큰 입력"""
         self._clear()
-        self.geometry("440x460")
+        self.geometry("440x500")
 
         frame = ctk.CTkFrame(self, fg_color="transparent")
-        frame.pack(fill="both", expand=True, padx=30, pady=30)
+        frame.pack(fill="both", expand=True, padx=30, pady=24)
 
-        # 로고 영역
-        logo_frame = ctk.CTkFrame(frame, fg_color=EMERALD_100, corner_radius=16,
-                                  height=64, width=64)
-        logo_frame.pack(pady=(20, 0))
-        logo_label = ctk.CTkLabel(logo_frame, text="🦷", font=ctk.CTkFont(size=28))
-        logo_label.pack(padx=16, pady=12)
+        # 로고
+        logo_frame = ctk.CTkFrame(frame, fg_color=EMERALD_100, corner_radius=16)
+        logo_frame.pack(pady=(8, 0))
+        ctk.CTkLabel(logo_frame, text="🦷", font=ctk.CTkFont(size=28)).pack(padx=16, pady=12)
 
-        ctk.CTkLabel(
-            frame, text="DenJOY 덴트웹 에이전트",
-            font=ctk.CTkFont(size=20, weight="bold"), text_color=SLATE_900,
-        ).pack(pady=(16, 4))
+        ctk.CTkLabel(frame, text="DenJOY 덴트웹 에이전트",
+                     font=ctk.CTkFont(size=20, weight="bold"), text_color=SLATE_900).pack(pady=(12, 2))
+        ctk.CTkLabel(frame, text="병원 PC에서 덴트웹 데이터를 자동 수집합니다",
+                     font=ctk.CTkFont(size=12), text_color=SLATE_500).pack(pady=(0, 12))
 
-        ctk.CTkLabel(
-            frame, text="병원 PC에서 덴트웹 데이터를 자동 수집합니다",
-            font=ctk.CTkFont(size=12), text_color=SLATE_500,
-        ).pack(pady=(0, 24))
+        self._make_step_indicator(frame, current=1, total=3)
 
-        # 토큰 입력
-        ctk.CTkLabel(
-            frame, text="에이전트 토큰",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=SLATE_700,
-            anchor="w",
-        ).pack(fill="x")
+        ctk.CTkLabel(frame, text="1단계 · 에이전트 토큰 입력",
+                     font=ctk.CTkFont(size=13, weight="bold"), text_color=SLATE_700,
+                     anchor="w").pack(fill="x")
+        ctk.CTkLabel(frame, text="앱 설정 → 덴트웹 자동화 → 토큰 생성 후 복사하세요",
+                     font=ctk.CTkFont(size=11), text_color=SLATE_400,
+                     anchor="w").pack(fill="x", pady=(2, 8))
 
         self._token_entry = ctk.CTkEntry(
-            frame, placeholder_text="앱 설정에서 복사한 토큰 붙여넣기",
-            height=42, corner_radius=10,
-            font=ctk.CTkFont(size=13),
+            frame, placeholder_text="토큰 붙여넣기 (Ctrl+V)",
+            height=42, corner_radius=10, font=ctk.CTkFont(size=13),
         )
-        self._token_entry.pack(fill="x", pady=(4, 16))
+        self._token_entry.pack(fill="x", pady=(0, 12))
 
-        # 시작프로그램 체크박스
         self._startup_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            frame, text="컴퓨터 시작 시 자동 실행",
-            variable=self._startup_var,
-            font=ctk.CTkFont(size=12), text_color=SLATE_700,
-            fg_color=EMERALD_500, hover_color=EMERALD_600,
-        ).pack(anchor="w", pady=(0, 20))
+        ctk.CTkCheckBox(frame, text="컴퓨터 시작 시 자동 실행",
+                        variable=self._startup_var,
+                        font=ctk.CTkFont(size=12), text_color=SLATE_700,
+                        fg_color=EMERALD_500, hover_color=EMERALD_600).pack(anchor="w", pady=(0, 12))
 
-        # 에러 메시지
-        self._setup_error = ctk.CTkLabel(
-            frame, text="", font=ctk.CTkFont(size=11),
-            text_color=ROSE_500, wraplength=360,
-        )
+        self._setup_error = ctk.CTkLabel(frame, text="", font=ctk.CTkFont(size=11),
+                                         text_color=ROSE_500, wraplength=360)
         self._setup_error.pack()
 
-        # 시작 버튼
         self._start_btn = ctk.CTkButton(
-            frame, text="시작하기", height=44, corner_radius=10,
+            frame, text="다음 →", height=44, corner_radius=10,
             font=ctk.CTkFont(size=14, weight="bold"),
             fg_color=EMERALD_600, hover_color=EMERALD_500,
             command=self._on_setup_submit,
@@ -174,18 +171,14 @@ class AgentApp(ctk.CTk):
         if not token:
             self._setup_error.configure(text="토큰을 입력해주세요.")
             return
-
         self._start_btn.configure(state="disabled", text="연결 확인 중...")
         self._setup_error.configure(text="")
         self.update()
 
-        # 백그라운드에서 서버 연결 확인
         def check():
             try:
                 cfg = {**DEFAULTS, "agent_token": token}
-                api = ApiClient(cfg["server_url"], token)
-                api.ping()
-                # 성공
+                ApiClient(cfg["server_url"], token).ping()
                 self.after(0, lambda: self._setup_success(token))
             except Exception as e:
                 self.after(0, lambda: self._setup_fail(str(e)))
@@ -194,16 +187,101 @@ class AgentApp(ctk.CTk):
 
     def _setup_success(self, token: str):
         self._save_config(token)
-
-        # 시작프로그램 등록
         if self._startup_var.get() and sys.platform == "win32":
             register()
-
-        self._show_main_screen()
+        self._show_onboarding_step2()
 
     def _setup_fail(self, error: str):
         self._setup_error.configure(text=f"서버 연결 실패: {error}\n토큰을 확인해주세요.")
-        self._start_btn.configure(state="normal", text="시작하기")
+        self._start_btn.configure(state="normal", text="다음 →")
+
+    def _show_onboarding_step2(self):
+        """온보딩 2단계: 좌표 설정 안내"""
+        self._clear()
+        self.geometry("440x500")
+
+        # runner/api 초기화 (좌표 설정 완료 여부 확인용)
+        self.api = ApiClient(self.cfg["server_url"], self.cfg["agent_token"])
+        self.runner = DentwebRunner(self.cfg)
+
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=30, pady=24)
+
+        ctk.CTkLabel(frame, text="🎯", font=ctk.CTkFont(size=36)).pack(pady=(8, 0))
+        ctk.CTkLabel(frame, text="클릭 위치 설정",
+                     font=ctk.CTkFont(size=20, weight="bold"), text_color=SLATE_900).pack(pady=(8, 2))
+        ctk.CTkLabel(frame, text="에이전트가 덴트웹을 자동으로 조작하려면\n각 버튼의 화면 위치를 한 번만 설정해야 합니다",
+                     font=ctk.CTkFont(size=12), text_color=SLATE_500,
+                     justify="center").pack(pady=(0, 12))
+
+        self._make_step_indicator(frame, current=2, total=3)
+
+        ctk.CTkLabel(frame, text="2단계 · 좌표 설정",
+                     font=ctk.CTkFont(size=13, weight="bold"), text_color=SLATE_700).pack()
+
+        # 안내 박스
+        guide_box = ctk.CTkFrame(frame, fg_color=EMERALD_50, corner_radius=10,
+                                 border_width=1, border_color=EMERALD_100)
+        guide_box.pack(fill="x", pady=12)
+        for txt in [
+            "① 덴트웹 프로그램을 먼저 실행해 주세요",
+            "② 아래 버튼을 누르면 설정 창이 열립니다",
+            "③ 각 단계마다 해당 버튼 위에 마우스를 올리고\n    5초 기다리면 자동으로 저장됩니다",
+        ]:
+            ctk.CTkLabel(guide_box, text=txt, font=ctk.CTkFont(size=11),
+                         text_color=SLATE_700, justify="left", anchor="w",
+                         wraplength=340).pack(anchor="w", padx=14, pady=4)
+
+        ctk.CTkButton(
+            frame, text="좌표 설정 시작", height=44, corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=EMERALD_600, hover_color=EMERALD_500,
+            command=self._onboarding_start_teach,
+        ).pack(fill="x", pady=(8, 4))
+
+        ctk.CTkButton(
+            frame, text="나중에 설정할게요", height=36, corner_radius=10,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent", hover_color=SLATE_100,
+            text_color=SLATE_400, border_width=0,
+            command=self._show_main_screen,
+        ).pack(fill="x")
+
+    def _onboarding_start_teach(self):
+        TeachWindow(self, self._onboarding_teach_complete)
+
+    def _onboarding_teach_complete(self, success: bool):
+        if success:
+            self._show_onboarding_step3()
+        else:
+            self._show_onboarding_step2()
+
+    def _show_onboarding_step3(self):
+        """온보딩 3단계: 설정 완료"""
+        self._clear()
+        self.geometry("440x400")
+
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=30, pady=30)
+
+        ctk.CTkLabel(frame, text="✅", font=ctk.CTkFont(size=48)).pack(pady=(20, 0))
+        ctk.CTkLabel(frame, text="설정 완료!",
+                     font=ctk.CTkFont(size=22, weight="bold"), text_color=SLATE_900).pack(pady=(12, 4))
+        ctk.CTkLabel(frame, text="이제 덴트웹 자동화가 준비됐습니다.\n매일 설정한 시간에 자동으로 실행됩니다.",
+                     font=ctk.CTkFont(size=12), text_color=SLATE_500,
+                     justify="center").pack(pady=(0, 8))
+
+        self._make_step_indicator(frame, current=3, total=3)
+
+        ctk.CTkLabel(frame, text="3단계 · 완료",
+                     font=ctk.CTkFont(size=13, weight="bold"), text_color=EMERALD_600).pack(pady=(0, 24))
+
+        ctk.CTkButton(
+            frame, text="시작하기", height=44, corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=EMERALD_600, hover_color=EMERALD_500,
+            command=self._show_main_screen,
+        ).pack(fill="x")
 
     # ─── Main Screen ───
 
@@ -382,8 +460,8 @@ class AgentApp(ctk.CTk):
         self._gui_log("에이전트 시작")
 
         if not self.runner.is_configured():
-            self._gui_log("클릭 좌표 미설정 — 좌표 학습이 필요합니다")
-            self._update_status("설정 필요", AMBER_500, "좌표 재설정을 눌러주세요")
+            # 좌표 미설정 → 온보딩 2단계로 안내
+            self.after(200, self._show_onboarding_step2)
         else:
             self._start_polling()
 
