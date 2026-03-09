@@ -63,6 +63,7 @@ DATA_STEPS = [
     # 안내: 엑셀저장 버튼 클릭 후 '다른 이름으로 저장' 창이 열린 상태에서 아래 좌표를 설정하세요.
     {"name": "save_dialog_agent_folder",  "label": "저장 창 — '덴트웹 에이전트' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
     {"name": "save_dialog_exports_folder","label": "저장 창 — 'exports' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "save_dialog_filename_field","label": "저장 창 — 파일 이름 입력 필드 (클릭 후 파일명 입력됨)", "x": None, "y": None, "wait_after": 0.5},
     {"name": "save_dialog_save_btn",      "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
     {"name": "save_dialog_confirm_yes",   "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼", "x": None, "y": None, "wait_after": 2.0},
 ]
@@ -140,7 +141,7 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
     # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
     OPTIONAL_STEPS = {
         "save_dialog_agent_folder", "save_dialog_exports_folder",
-        "save_dialog_save_btn", "save_dialog_confirm_yes",
+        "save_dialog_filename_field", "save_dialog_save_btn", "save_dialog_confirm_yes",
     }
 
     for step in data.get("data_steps", []):
@@ -418,9 +419,16 @@ class DentwebRunner:
         else:
             _log("[경고] exports 폴더 좌표 미설정 — 폴더 탐색 생략")
 
-        # 4c. 파일명 필드 (Alt+N) → 선택 → 붙여넣기
-        pyautogui.hotkey("alt", "n")
-        time.sleep(0.3)
+        # 4c. 파일명 필드 클릭 → 전체 선택 → 파일명 입력
+        filename_step = self._get_save_step("save_dialog_filename_field")
+        if filename_step:
+            _log("파일 이름 필드 클릭")
+            _win32_click(int(filename_step["x"]), int(filename_step["y"]))
+            time.sleep(filename_step.get("wait_after", 0.5))
+        else:
+            _log("[경고] 파일 이름 필드 좌표 미설정 — Alt+N으로 폴백")
+            pyautogui.hotkey("alt", "n")
+            time.sleep(0.3)
         pyautogui.hotkey("ctrl", "a")
         time.sleep(0.2)
         _paste_text("dentweb_export")
