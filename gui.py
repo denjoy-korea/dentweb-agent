@@ -424,12 +424,12 @@ class AgentApp(ctk.CTk):
         )
         self._run_now_btn.pack(fill="x", pady=(0, 6))
 
-        # 하단 버튼 영역
-        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(0, 4))
+        # 하단 버튼 영역 (2행 2열)
+        btn_row1 = ctk.CTkFrame(container, fg_color="transparent")
+        btn_row1.pack(fill="x", pady=(0, 3))
 
         teach_btn = ctk.CTkButton(
-            btn_frame, text="좌표 설정", height=36, corner_radius=8,
+            btn_row1, text="좌표 설정", height=36, corner_radius=8,
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=SLATE_100, hover_color=SLATE_200,
             text_color=SLATE_700, border_width=1, border_color=SLATE_200,
@@ -437,18 +437,30 @@ class AgentApp(ctk.CTk):
         )
         teach_btn.pack(side="left", expand=True, fill="x", padx=(0, 3))
 
-        test_btn = ctk.CTkButton(
-            btn_frame, text="단계별 테스트", height=36, corner_radius=8,
+        settings_btn = ctk.CTkButton(
+            btn_row1, text="⚙  자동화 설정", height=36, corner_radius=8,
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=EMERALD_50, hover_color=EMERALD_100,
             text_color=EMERALD_600, border_width=1, border_color=EMERALD_100,
+            command=self._on_settings_click,
+        )
+        settings_btn.pack(side="left", expand=True, fill="x", padx=(3, 0))
+
+        btn_row2 = ctk.CTkFrame(container, fg_color="transparent")
+        btn_row2.pack(fill="x", pady=(0, 4))
+
+        test_btn = ctk.CTkButton(
+            btn_row2, text="단계별 테스트", height=36, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=SLATE_100, hover_color=SLATE_200,
+            text_color=SLATE_700, border_width=1, border_color=SLATE_200,
             command=self._on_test_click,
         )
-        test_btn.pack(side="left", expand=True, fill="x", padx=(3, 3))
+        test_btn.pack(side="left", expand=True, fill="x", padx=(0, 3))
 
         startup_text = "시작프로그램 해제" if is_registered() else "시작프로그램 등록"
         self._startup_btn = ctk.CTkButton(
-            btn_frame, text=startup_text, height=36, corner_radius=8,
+            btn_row2, text=startup_text, height=36, corner_radius=8,
             font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=SLATE_100, hover_color=SLATE_200,
             text_color=SLATE_700, border_width=1, border_color=SLATE_200,
@@ -778,6 +790,12 @@ class AgentApp(ctk.CTk):
 
     # ─── Startup Toggle ───
 
+    def _on_settings_click(self):
+        SettingsWindow(self, self.api, on_saved=self._on_settings_saved)
+
+    def _on_settings_saved(self, enabled: bool, scheduled_time: str):
+        self._gui_log(f"설정 저장됨 — 자동 실행: {'켜짐' if enabled else '꺼짐'}, 시간: {scheduled_time}")
+
     def _on_startup_toggle(self):
         if is_registered():
             unregister()
@@ -797,6 +815,163 @@ class AgentApp(ctk.CTk):
     def on_closing(self):
         self.polling = False
         self.destroy()
+
+
+# ─── Settings Window ───
+
+class SettingsWindow(ctk.CTkToplevel):
+    """자동화 설정 창 — 자동 실행 ON/OFF · 실행 시간"""
+
+    def __init__(self, parent: "AgentApp", api, on_saved=None):
+        super().__init__(parent)
+        self.api = api
+        self.on_saved = on_saved
+
+        self.title("자동화 설정")
+        self.geometry("360x280")
+        self.resizable(False, False)
+        self.configure(fg_color=SLATE_50)
+        self.attributes("-topmost", True)
+        self.grab_set()  # 모달
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+        self._enabled_var = ctk.BooleanVar(value=False)
+        self._time_var = ctk.StringVar(value="21:00")
+        self._loading = True
+
+        self._build_ui()
+        threading.Thread(target=self._load_state, daemon=True).start()
+
+    def _build_ui(self):
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=24, pady=20)
+
+        # 제목
+        ctk.CTkLabel(
+            container, text="자동화 설정",
+            font=ctk.CTkFont(size=16, weight="bold"), text_color=SLATE_900,
+        ).pack(anchor="w", pady=(0, 16))
+
+        # 자동 실행 토글
+        toggle_row = ctk.CTkFrame(container, fg_color=WHITE, corner_radius=10,
+                                  border_width=1, border_color=SLATE_200)
+        toggle_row.pack(fill="x", pady=(0, 10))
+        toggle_inner = ctk.CTkFrame(toggle_row, fg_color="transparent")
+        toggle_inner.pack(fill="x", padx=14, pady=12)
+
+        ctk.CTkLabel(
+            toggle_inner, text="자동 실행",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=SLATE_700,
+        ).pack(side="left")
+
+        self._toggle_btn = ctk.CTkButton(
+            toggle_inner, text="", width=52, height=26, corner_radius=13,
+            fg_color=SLATE_200, hover_color=SLATE_200,
+            command=self._toggle_enabled,
+        )
+        self._toggle_btn.pack(side="right")
+
+        # 실행 시간
+        time_card = ctk.CTkFrame(container, fg_color=WHITE, corner_radius=10,
+                                 border_width=1, border_color=SLATE_200)
+        time_card.pack(fill="x", pady=(0, 16))
+        time_inner = ctk.CTkFrame(time_card, fg_color="transparent")
+        time_inner.pack(fill="x", padx=14, pady=12)
+
+        ctk.CTkLabel(
+            time_inner, text="실행 시간 (KST)",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=SLATE_700,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            time_inner, text="매일 이 시간에 자동으로 실행됩니다",
+            font=ctk.CTkFont(size=10), text_color=SLATE_400,
+        ).pack(anchor="w", pady=(2, 8))
+
+        self._time_entry = ctk.CTkEntry(
+            time_inner, textvariable=self._time_var,
+            placeholder_text="21:00", height=36, corner_radius=8,
+            font=ctk.CTkFont(size=14),
+        )
+        self._time_entry.pack(fill="x")
+
+        # 저장 버튼
+        self._status_label = ctk.CTkLabel(
+            container, text="",
+            font=ctk.CTkFont(size=11), text_color=SLATE_400,
+        )
+        self._status_label.pack(anchor="w", pady=(0, 6))
+
+        self._save_btn = ctk.CTkButton(
+            container, text="저장", height=40, corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=EMERALD_600, hover_color="#047857",
+            command=self._on_save,
+        )
+        self._save_btn.pack(fill="x")
+
+    def _toggle_enabled(self):
+        self._enabled_var.set(not self._enabled_var.get())
+        self._refresh_toggle()
+
+    def _refresh_toggle(self):
+        if self._enabled_var.get():
+            self._toggle_btn.configure(fg_color=EMERALD_500, hover_color=EMERALD_600, text="ON")
+        else:
+            self._toggle_btn.configure(fg_color=SLATE_200, hover_color=SLATE_200, text="OFF")
+
+    def _load_state(self):
+        try:
+            result = self.api.get_state()
+            state = result.get("state", {})
+            enabled = bool(state.get("enabled", False))
+            scheduled = str(state.get("scheduled_time", "21:00"))
+            self.after(0, lambda: self._apply_state(enabled, scheduled))
+        except Exception as e:
+            self.after(0, lambda: self._status_label.configure(
+                text=f"설정 불러오기 실패: {e}", text_color=ROSE_500))
+
+    def _apply_state(self, enabled: bool, scheduled_time: str):
+        self._enabled_var.set(enabled)
+        self._time_var.set(scheduled_time)
+        self._refresh_toggle()
+        self._loading = False
+
+    def _on_save(self):
+        time_val = self._time_var.get().strip()
+        import re
+        if not re.match(r"^\d{2}:\d{2}$", time_val):
+            self._status_label.configure(text="시간 형식은 HH:MM 이어야 합니다", text_color=ROSE_500)
+            return
+
+        h, m = map(int, time_val.split(":"))
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            self._status_label.configure(text="올바른 시간을 입력하세요 (00:00 ~ 23:59)", text_color=ROSE_500)
+            return
+
+        self._save_btn.configure(state="disabled", text="저장 중...")
+        self._status_label.configure(text="", text_color=SLATE_400)
+
+        enabled = self._enabled_var.get()
+
+        def do_save():
+            try:
+                self.api.save_settings(enabled, time_val)
+                self.after(0, lambda: self._save_done(enabled, time_val))
+            except Exception as e:
+                self.after(0, lambda: self._save_failed(str(e)))
+
+        threading.Thread(target=do_save, daemon=True).start()
+
+    def _save_done(self, enabled: bool, scheduled_time: str):
+        self._save_btn.configure(state="normal", text="저장")
+        self._status_label.configure(text="저장되었습니다", text_color=EMERALD_600)
+        if self.on_saved:
+            self.on_saved(enabled, scheduled_time)
+        self.after(1500, self.destroy)
+
+    def _save_failed(self, error: str):
+        self._save_btn.configure(state="normal", text="저장")
+        self._status_label.configure(text=f"저장 실패: {error}", text_color=ROSE_500)
 
 
 # ─── Teach Mode Window ───

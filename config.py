@@ -75,6 +75,9 @@ def load_config(path: str = "config.json") -> dict:
     for key, default in DEFAULTS.items():
         cfg.setdefault(key, default)
 
+    # EXE 위치가 변경되어도 exports 폴더 경로를 항상 최신으로 유지
+    cfg["download_dir"] = _default_exports_dir()
+
     cfg["server_url"] = cfg["server_url"].rstrip("/")
     return cfg
 

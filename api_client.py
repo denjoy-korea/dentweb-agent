@@ -44,6 +44,28 @@ class ApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_state(self) -> dict:
+        """현재 설정/상태 조회"""
+        resp = requests.post(
+            self.automation_url,
+            json={"action": "get_state"},
+            headers=self.headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def save_settings(self, enabled: bool, scheduled_time: str) -> dict:
+        """에이전트에서 자동 실행 설정 저장"""
+        resp = requests.post(
+            self.automation_url,
+            json={"action": "agent_save_settings", "enabled": enabled, "scheduled_time": scheduled_time},
+            headers=self.headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def upload_file(self, upload_url: str, file_path: str) -> dict:
         filename = os.path.basename(file_path)
         with open(file_path, "rb") as f:
