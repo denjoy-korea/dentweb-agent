@@ -60,11 +60,9 @@ DATA_STEPS = [
     {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 5.0},
     {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 3.0},
     # ── 저장 다이얼로그 단계 ──────────────────────────────────────
-    # 안내: 엑셀저장 버튼 클릭 후 '다른 이름으로 저장' 창이 열린 상태에서 아래 좌표를 설정하세요.
-    {"name": "save_dialog_agent_folder",  "label": "저장 창 — '덴트웹 에이전트' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "save_dialog_exports_folder","label": "저장 창 — 'exports' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "save_dialog_save_btn",      "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
-    {"name": "save_dialog_confirm_yes",   "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼 (같은 날 재실행 시)", "x": None, "y": None, "wait_after": 2.0},
+    # 폴더 이동은 Alt+D 주소창 입력 방식으로 자동 처리 (좌표 불필요)
+    {"name": "save_dialog_save_btn",    "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
+    {"name": "save_dialog_confirm_yes", "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼 (같은 날 재실행 시)", "x": None, "y": None, "wait_after": 2.0},
 ]
 
 
@@ -139,7 +137,6 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
 
     # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
     OPTIONAL_STEPS = {
-        "save_dialog_agent_folder", "save_dialog_exports_folder",
         "save_dialog_save_btn", "save_dialog_confirm_yes",
     }
 
@@ -425,29 +422,15 @@ class DentwebRunner:
         # 4. "다른 이름으로 저장" 다이얼로그 처리
         _log("저장 다이얼로그 처리 중...")
 
-        # 4a. 저장 다이얼로그 활성화(단일 클릭) 후 '덴트웹 에이전트' 폴더 더블클릭
-        # 주의: 활성화 클릭 후 Windows 더블클릭 임계값(~500ms)보다 길게 대기해야
-        #       이름 바꾸기 모드로 진입하지 않음
-        agent_step = self._get_save_step("save_dialog_agent_folder")
-        if agent_step:
-            ax, ay = int(agent_step["x"]), int(agent_step["y"])
-            _log("저장 창 활성화 (단일 클릭)")
-            pyautogui.click(ax, ay)
-            time.sleep(0.8)  # Windows 더블클릭 임계값보다 충분히 길게 대기
-            _log("'덴트웹 에이전트' 폴더 더블클릭")
-            pyautogui.doubleClick(ax, ay, interval=0.1)  # 빠른 더블클릭
-            time.sleep(agent_step.get("wait_after", 1.5))
-        else:
-            _log("[경고] 덴트웹 에이전트 폴더 좌표 미설정 — 폴더 탐색 생략")
-
-        # 4b. 'exports' 폴더 더블클릭 (이미 포커스 있으므로 바로 더블클릭)
-        exports_step = self._get_save_step("save_dialog_exports_folder")
-        if exports_step:
-            _log("'exports' 폴더 더블클릭")
-            pyautogui.doubleClick(int(exports_step["x"]), int(exports_step["y"]), interval=0.1)
-            time.sleep(exports_step.get("wait_after", 1.5))
-        else:
-            _log("[경고] exports 폴더 좌표 미설정 — 폴더 탐색 생략")
+        # 4a. Alt+D로 주소창 포커스 → exports 폴더 경로 붙여넣기 → Enter로 이동
+        #     (더블클릭 방식 대신 경로 직접 입력 — 폴더 좌표 설정 불필요)
+        _log(f"저장 위치 이동: {self.download_dir}")
+        pyautogui.hotkey("alt", "d")
+        time.sleep(0.4)
+        _paste_text(self.download_dir)
+        time.sleep(0.3)
+        pyautogui.press("enter")
+        time.sleep(1.2)  # 폴더 탐색 완료 대기
 
         # 4c. '저장(S)' 버튼 클릭
         save_btn_step = self._get_save_step("save_dialog_save_btn")
