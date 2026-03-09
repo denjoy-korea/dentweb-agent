@@ -828,7 +828,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.on_saved = on_saved
 
         self.title("자동화 설정")
-        self.geometry("360x280")
+        self.geometry("360x320")
         self.resizable(False, False)
         self.configure(fg_color=SLATE_50)
         self.attributes("-topmost", True)
