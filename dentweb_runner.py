@@ -51,6 +51,7 @@ def _win32_click(x: int, y: int, activate_first: bool = False):
 # --- 클릭 시퀀스 정의 ---
 
 DATA_STEPS = [
+    {"name": "dentweb_open", "label": "덴트웹 창 열기 — 작업표시줄의 덴트웹 아이콘 클릭", "x": None, "y": None, "wait_after": 2.0},
     {"name": "stats_menu", "label": "상단 '경영/통계' 아이콘", "x": None, "y": None, "wait_after": 3.0},
     {"name": "implant_tab", "label": "왼쪽 사이드바 '임플란트 수술 통계'", "x": None, "y": None, "wait_after": 3.0},
     {"name": "custom_period", "label": "'특정기간' 라디오 버튼", "x": None, "y": None, "wait_after": 1.5},
@@ -137,6 +138,7 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
 
     # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
     OPTIONAL_STEPS = {
+        "dentweb_open",
         "save_dialog_save_btn", "save_dialog_confirm_yes",
     }
 
@@ -371,7 +373,14 @@ class DentwebRunner:
             _log("설정 데이터 없음")
             return None
 
-        # 1. 덴트웹 창 자동 탐색 + 활성화
+        # 1. 덴트웹 창 열기 (작업표시줄 아이콘 클릭 — 좌표 설정된 경우)
+        open_step = self._get_save_step("dentweb_open")
+        if open_step:
+            _log("덴트웹 창 열기 (작업표시줄 클릭)")
+            _win32_click(int(open_step["x"]), int(open_step["y"]))
+            time.sleep(open_step.get("wait_after", 2.0))
+
+        # 2. 덴트웹 창 자동 탐색 + 활성화
         _log("덴트웹 창 탐색 중...")
         if not self._activate_dentweb(log_callback=log_callback):
             _log("덴트웹 창을 찾을 수 없습니다")
