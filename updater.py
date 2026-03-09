@@ -46,8 +46,13 @@ def check_update(current_version: str) -> dict | None:
         return None
 
 
-def download_update(download_url: str, progress_callback=None) -> str | None:
+def download_update(download_url: str, progress_callback=None,
+                    log_callback=None) -> str | None:
     """새 exe를 현재 exe 옆에 다운로드 → 경로 반환."""
+    def _log(msg):
+        if log_callback:
+            log_callback(msg)
+
     try:
         if getattr(sys, "frozen", False):
             target_dir = os.path.dirname(sys.executable)
@@ -65,27 +70,35 @@ def download_update(download_url: str, progress_callback=None) -> str | None:
                 except OSError:
                     pass
 
-        resp = requests.get(download_url, stream=True, timeout=120)
+        _log(f"다운로드 시작: {download_url}")
+        resp = requests.get(download_url, stream=True, timeout=180,
+                            allow_redirects=True)
         resp.raise_for_status()
 
         total = int(resp.headers.get("content-length", 0))
         downloaded = 0
+        _log(f"파일 크기: {total / 1024 / 1024:.1f} MB")
 
         with open(download_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=65536):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback and total > 0:
-                    progress_callback(downloaded / total)
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback and total > 0:
+                        progress_callback(downloaded / total)
 
-        # 파일 크기 검증
         actual_size = os.path.getsize(download_path)
-        if total > 0 and actual_size != total:
+        _log(f"다운로드 완료: {actual_size / 1024 / 1024:.1f} MB")
+
+        # 크기 검증 (content-length가 있을 때만)
+        if total > 0 and actual_size < total * 0.95:
+            _log(f"크기 불일치 — 예상 {total}, 실제 {actual_size}")
             os.remove(download_path)
             return None
 
         return download_path
-    except Exception:
+    except Exception as e:
+        _log(f"다운로드 오류: {e}")
         return None
 
 

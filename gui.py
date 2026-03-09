@@ -584,9 +584,13 @@ class AgentApp(ctk.CTk):
             def on_progress(p):
                 self.after(0, lambda p=p: self._update_progress.set(p))
 
+            def on_log(msg):
+                self.after(0, lambda m=msg: self._gui_log(m))
+
             new_path = download_update(
                 self._pending_update["download_url"],
                 progress_callback=on_progress,
+                log_callback=on_log,
             )
 
             if new_path:
@@ -598,10 +602,9 @@ class AgentApp(ctk.CTk):
 
     def _apply_downloaded_update(self, new_exe_path: str):
         self._update_btn.configure(text="재시작 중...")
-        self._gui_log("업데이트 다운로드 완료 — 재시작합니다")
+        self._gui_log("업데이트 적용 중 — 잠시 후 재시작됩니다")
         self.polling = False
-        self.update()
-        apply_update(new_exe_path)
+        self.after(500, lambda: apply_update(new_exe_path))
 
     def _update_download_failed(self):
         self._update_btn.configure(state="normal", text="재시도")
