@@ -63,9 +63,8 @@ DATA_STEPS = [
     # 안내: 엑셀저장 버튼 클릭 후 '다른 이름으로 저장' 창이 열린 상태에서 아래 좌표를 설정하세요.
     {"name": "save_dialog_agent_folder",  "label": "저장 창 — '덴트웹 에이전트' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
     {"name": "save_dialog_exports_folder","label": "저장 창 — 'exports' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
-    {"name": "save_dialog_filename_field","label": "저장 창 — 파일 이름 입력 필드 (클릭 후 파일명 입력됨)", "x": None, "y": None, "wait_after": 0.5},
     {"name": "save_dialog_save_btn",      "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
-    {"name": "save_dialog_confirm_yes",   "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼", "x": None, "y": None, "wait_after": 2.0},
+    {"name": "save_dialog_confirm_yes",   "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼 (같은 날 재실행 시)", "x": None, "y": None, "wait_after": 2.0},
 ]
 
 
@@ -141,7 +140,7 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
     # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
     OPTIONAL_STEPS = {
         "save_dialog_agent_folder", "save_dialog_exports_folder",
-        "save_dialog_filename_field", "save_dialog_save_btn", "save_dialog_confirm_yes",
+        "save_dialog_save_btn", "save_dialog_confirm_yes",
     }
 
     for step in data.get("data_steps", []):
@@ -333,22 +332,47 @@ class DentwebRunner:
             return False
 
     def _wait_for_download(self) -> str | None:
-        """다운로드 폴더에서 엑셀 파일 감지"""
-        target = os.path.join(self.download_dir, "dentweb_export.xlsx")
+        """exports 폴더에서 새로 저장된 엑셀 파일 감지 (신규 파일 or 수정 시간 갱신)"""
         deadline = time.time() + self.download_timeout
-        before = set(glob.glob(os.path.join(self.download_dir, "*.xlsx")))
+        before_mtime = {
+            f: os.path.getmtime(f)
+            for f in glob.glob(os.path.join(self.download_dir, "*.xlsx"))
+        }
+        before_set = set(before_mtime.keys())
 
         while time.time() < deadline:
-            if os.path.exists(target):
-                time.sleep(1)
-                return target
             current = set(glob.glob(os.path.join(self.download_dir, "*.xlsx")))
-            new_files = current - before
+            # 새로 생성된 파일
+            new_files = current - before_set
             if new_files:
                 time.sleep(1)
                 return max(new_files, key=os.path.getmtime)
+            # 기존 파일인데 수정 시간 갱신 (같은 날 재실행)
+            for f in current:
+                if f in before_mtime and os.path.getmtime(f) > before_mtime[f] + 1:
+                    time.sleep(1)
+                    return f
             time.sleep(1)
         return None
+
+    def _cleanup_old_exports(self, keep_days: int = 7, log_callback=None):
+        """exports 폴더에서 keep_days일 이상 지난 엑셀 파일 삭제"""
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+
+        cutoff = time.time() - keep_days * 86400
+        removed = 0
+        for f in glob.glob(os.path.join(self.download_dir, "*.xlsx")):
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    os.remove(f)
+                    removed += 1
+                    _log(f"오래된 파일 삭제: {os.path.basename(f)}")
+            except OSError:
+                pass
+        if removed:
+            _log(f"총 {removed}개 파일 정리 완료")
 
     def download_excel(self, log_callback=None) -> str | None:
         """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별"""
@@ -422,22 +446,7 @@ class DentwebRunner:
         else:
             _log("[경고] exports 폴더 좌표 미설정 — 폴더 탐색 생략")
 
-        # 4c. 파일명 필드 클릭 → 전체 선택 → 파일명 입력
-        filename_step = self._get_save_step("save_dialog_filename_field")
-        if filename_step:
-            _log("파일 이름 필드 클릭")
-            _win32_click(int(filename_step["x"]), int(filename_step["y"]))
-            time.sleep(filename_step.get("wait_after", 0.5))
-        else:
-            _log("[경고] 파일 이름 필드 좌표 미설정 — Alt+N으로 폴백")
-            pyautogui.hotkey("alt", "n")
-            time.sleep(0.3)
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.2)
-        _paste_text("dentweb_export")
-        time.sleep(0.3)
-
-        # 4d. '저장(S)' 버튼 클릭
+        # 4c. '저장(S)' 버튼 클릭
         save_btn_step = self._get_save_step("save_dialog_save_btn")
         if save_btn_step:
             _log("'저장(S)' 버튼 클릭")
@@ -475,6 +484,10 @@ class DentwebRunner:
             return None
 
         _log("수술 기록 데이터 확인 완료")
+
+        # 7일 이상 지난 파일 정리
+        self._cleanup_old_exports(keep_days=7, log_callback=log_callback)
+
         return excel_path
 
     def cleanup(self, file_path: str):
