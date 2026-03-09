@@ -328,27 +328,17 @@ class DentwebRunner:
         except Exception:
             return False
 
-    def _wait_for_download(self) -> str | None:
-        """exports 폴더에서 새로 저장된 엑셀 파일 감지 (신규 파일 or 수정 시간 갱신)"""
+    def _wait_for_download(self, after_time: float) -> str | None:
+        """exports 폴더에서 after_time 이후에 저장된 엑셀 파일 반환"""
         deadline = time.time() + self.download_timeout
-        before_mtime = {
-            f: os.path.getmtime(f)
-            for f in glob.glob(os.path.join(self.download_dir, "*.xlsx"))
-        }
-        before_set = set(before_mtime.keys())
-
         while time.time() < deadline:
-            current = set(glob.glob(os.path.join(self.download_dir, "*.xlsx")))
-            # 새로 생성된 파일
-            new_files = current - before_set
-            if new_files:
-                time.sleep(1)
-                return max(new_files, key=os.path.getmtime)
-            # 기존 파일인데 수정 시간 갱신 (같은 날 재실행)
-            for f in current:
-                if f in before_mtime and os.path.getmtime(f) > before_mtime[f] + 1:
-                    time.sleep(1)
-                    return f
+            candidates = [
+                f for f in glob.glob(os.path.join(self.download_dir, "*.xlsx"))
+                if os.path.getmtime(f) >= after_time
+            ]
+            if candidates:
+                time.sleep(0.5)  # 파일 쓰기 완료 대기
+                return max(candidates, key=os.path.getmtime)
             time.sleep(1)
         return None
 
@@ -414,6 +404,7 @@ class DentwebRunner:
             _log("엑셀저장 버튼 설정 없음")
             return None
 
+        export_start_time = time.time()  # 파일 감지 기준 시각
         if not _find_and_click(export_step, log_callback):
             _log("엑셀저장 버튼 클릭 실패")
             return None
@@ -456,7 +447,7 @@ class DentwebRunner:
 
         # 6. 파일 저장 대기
         _log("엑셀 파일 저장 대기 중...")
-        excel_path = self._wait_for_download()
+        excel_path = self._wait_for_download(after_time=export_start_time)
         if not excel_path:
             _log("엑셀 파일 저장 시간 초과")
             return None
