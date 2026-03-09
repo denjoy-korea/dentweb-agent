@@ -59,6 +59,12 @@ DATA_STEPS = [
     {"name": "date_end_field", "label": "'까지' 날짜 필드 클릭 (달력 열기)", "x": None, "y": None, "wait_after": 1.5},
     {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 5.0},
     {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 3.0},
+    # ── 저장 다이얼로그 단계 ──────────────────────────────────────
+    # 안내: 엑셀저장 버튼 클릭 후 '다른 이름으로 저장' 창이 열린 상태에서 아래 좌표를 설정하세요.
+    {"name": "save_dialog_agent_folder",  "label": "저장 창 — '덴트웹 에이전트' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "save_dialog_exports_folder","label": "저장 창 — 'exports' 폴더 위치 (더블클릭 진입)", "x": None, "y": None, "wait_after": 1.5},
+    {"name": "save_dialog_save_btn",      "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
+    {"name": "save_dialog_confirm_yes",   "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼", "x": None, "y": None, "wait_after": 2.0},
 ]
 
 
@@ -131,10 +137,18 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
     if isinstance(data, list):
         return None
 
+    # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
+    OPTIONAL_STEPS = {
+        "save_dialog_agent_folder", "save_dialog_exports_folder",
+        "save_dialog_save_btn", "save_dialog_confirm_yes",
+    }
+
     for step in data.get("data_steps", []):
         if step.get("skip"):
             continue
         if step.get("name") == "data_check":
+            continue
+        if step.get("name") in OPTIONAL_STEPS:
             continue
         # 이미지 템플릿이 있으면 좌표 없어도 OK
         template_path = _get_template_path(step.get("name", ""))
@@ -207,6 +221,14 @@ class DentwebRunner:
 
     def is_configured(self) -> bool:
         return self._data is not None
+
+    def _get_save_step(self, name: str) -> dict | None:
+        """저장 다이얼로그용 단계 가져오기 (좌표 설정된 경우만)"""
+        for step in self._data.get("data_steps", []):
+            if step.get("name") == name and not step.get("skip"):
+                if step.get("x") is not None and step.get("y") is not None:
+                    return step
+        return None
 
     def teach(self):
         self._data = run_teach_mode()
@@ -376,19 +398,55 @@ class DentwebRunner:
         time.sleep(export_step.get("wait_after", 3.0))
 
         # 4. "다른 이름으로 저장" 다이얼로그 처리
-        save_path = os.path.join(self.download_dir, "dentweb_export.xlsx")
         _log("저장 다이얼로그 처리 중...")
-        pyautogui.hotkey("alt", "n")
-        time.sleep(0.5)
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.3)
-        _paste_text(save_path)
-        time.sleep(0.5)
-        pyautogui.press("enter")
 
-        # 5. 덮어쓰기 확인
-        time.sleep(2)
-        pyautogui.press("enter")
+        # 4a. '덴트웹 에이전트' 폴더 더블클릭
+        agent_step = self._get_save_step("save_dialog_agent_folder")
+        if agent_step:
+            _log("'덴트웹 에이전트' 폴더 더블클릭")
+            pyautogui.doubleClick(int(agent_step["x"]), int(agent_step["y"]))
+            time.sleep(agent_step.get("wait_after", 1.5))
+        else:
+            _log("[경고] 덴트웹 에이전트 폴더 좌표 미설정 — 폴더 탐색 생략")
+
+        # 4b. 'exports' 폴더 더블클릭
+        exports_step = self._get_save_step("save_dialog_exports_folder")
+        if exports_step:
+            _log("'exports' 폴더 더블클릭")
+            pyautogui.doubleClick(int(exports_step["x"]), int(exports_step["y"]))
+            time.sleep(exports_step.get("wait_after", 1.5))
+        else:
+            _log("[경고] exports 폴더 좌표 미설정 — 폴더 탐색 생략")
+
+        # 4c. 파일명 필드 (Alt+N) → 선택 → 붙여넣기
+        pyautogui.hotkey("alt", "n")
+        time.sleep(0.3)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.2)
+        _paste_text("dentweb_export")
+        time.sleep(0.3)
+
+        # 4d. '저장(S)' 버튼 클릭
+        save_btn_step = self._get_save_step("save_dialog_save_btn")
+        if save_btn_step:
+            _log("'저장(S)' 버튼 클릭")
+            _win32_click(int(save_btn_step["x"]), int(save_btn_step["y"]))
+            time.sleep(save_btn_step.get("wait_after", 2.0))
+        else:
+            _log("[경고] 저장 버튼 좌표 미설정 — Enter로 폴백")
+            pyautogui.press("enter")
+            time.sleep(2)
+
+        # 5. 덮어쓰기 확인 팝업 — '예(Y)' 클릭
+        confirm_step = self._get_save_step("save_dialog_confirm_yes")
+        if confirm_step:
+            _log("덮어쓰기 확인 '예(Y)' 클릭")
+            _win32_click(int(confirm_step["x"]), int(confirm_step["y"]))
+            time.sleep(confirm_step.get("wait_after", 2.0))
+        else:
+            _log("[경고] 예(Y) 버튼 좌표 미설정 — Enter로 폴백")
+            pyautogui.press("enter")
+            time.sleep(2)
 
         # 6. 파일 저장 대기
         _log("엑셀 파일 저장 대기 중...")
