@@ -16,7 +16,7 @@ class ConfigProtectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(config, 'protect_token', return_value='dpapi-v1:opaque'):
             path = str(Path(directory) / 'config.json')
             config.save_config(path, {'agent_token': 'local-test-token', 'coords': {'x': 42}})
-            raw = Path(path).read_text()
+            raw = Path(path).read_text(encoding='utf-8')
             self.assertNotIn('local-test-token', raw)
             self.assertNotIn('"agent_token"', raw)
             self.assertEqual(json.loads(raw)['coords'], {'x': 42})
@@ -27,7 +27,7 @@ class ConfigProtectionTests(unittest.TestCase):
             path.write_text(json.dumps({'agent_token': 'migration-test'}))
             loaded = config.load_config(str(path))
             self.assertEqual(loaded['agent_token'], 'migration-test')
-            self.assertNotIn('migration-test', path.read_text())
+            self.assertNotIn('migration-test', path.read_text(encoding='utf-8'))
 
     def test_encryption_failure_preserves_existing_file(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(config, 'protect_token', side_effect=RuntimeError('denied')):
@@ -35,7 +35,7 @@ class ConfigProtectionTests(unittest.TestCase):
             path.write_text('original')
             with self.assertRaises(RuntimeError):
                 config.save_config(str(path), {'agent_token': 'unwritten'})
-            self.assertEqual(path.read_text(), 'original')
+            self.assertEqual(path.read_text(encoding='utf-8'), 'original')
             self.assertEqual(len(list(path.parent.iterdir())), 1)
 
     def test_non_windows_never_uses_plaintext_fallback(self):
@@ -67,8 +67,8 @@ class ConfigCompatibilityTests(unittest.TestCase):
             self.assertEqual(loaded['download_dir'], config._default_exports_dir())
             self.assertEqual(loaded['coords'], {'x': 42})
             self.assertEqual(loaded['poll_interval_seconds'], 45)
-            self.assertNotIn('migration-test', path.read_text())
-            self.assertEqual(json.loads(path.read_text())['server_url'], config.SERVER_URL)
+            self.assertNotIn('migration-test', path.read_text(encoding='utf-8'))
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['server_url'], config.SERVER_URL)
 
     def test_failed_atomic_replace_preserves_previous_settings_and_removes_tempfile(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(config, 'protect_token', return_value='dpapi-v1:opaque'), patch.object(config.os, 'replace', side_effect=OSError('denied')):
@@ -76,5 +76,17 @@ class ConfigCompatibilityTests(unittest.TestCase):
             path.write_text('original')
             with self.assertRaises(OSError):
                 config.save_config(str(path), {'agent_token': 'unwritten'})
-            self.assertEqual(path.read_text(), 'original')
+            self.assertEqual(path.read_text(encoding='utf-8'), 'original')
             self.assertEqual(len(list(path.parent.iterdir())), 1)
+
+class NativeConfigTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'requires Windows DPAPI')
+    def test_native_legacy_file_is_migrated_and_can_be_reopened(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'config.json'
+            path.write_text(json.dumps({'agent_token': 'native-config-synthetic', 'dentweb_window_title': '덴트웹'}), encoding='utf-8')
+            first = config.load_config(str(path))
+            second = config.load_config(str(path))
+            self.assertEqual(first['agent_token'], second['agent_token'])
+            self.assertEqual(second['dentweb_window_title'], '덴트웹')
+            self.assertNotIn('native-config-synthetic', path.read_text(encoding='utf-8'))

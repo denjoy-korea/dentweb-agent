@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import updater
 
-URL = 'https://github.com/denjoy-korea/dentweb-agent/releases/download/v3.6.2/dentweb-agent.exe'
+URL = 'https://github.com/denjoy-korea/dentweb-agent/releases/download/v3.6.3/dentweb-agent.exe'
 
 
 class UpdateVerificationTests(unittest.TestCase):
@@ -55,14 +55,14 @@ class UpdateVerificationTests(unittest.TestCase):
 
     def test_wrong_repository_or_version_never_gets_requested(self):
         for url in (URL.replace('denjoy-korea', 'another-owner'), URL.replace('github.com', 'github.com.attacker.invalid'),
-                    URL.replace('/v3.6.2/', '/latest/'), URL + '?token=secret'):
+                    URL.replace('/v3.6.3/', '/latest/'), URL + '?token=secret'):
             with self.subTest(url=url), patch.object(updater.requests, 'get') as get:
                 self.assertIsNone(updater.download_update(url))
                 get.assert_not_called()
 
     def test_latest_without_checksum_is_not_offered(self):
         response = self.response('')
-        response.json.return_value = {'tag_name': 'v3.6.2', 'assets': [{'name': 'dentweb-agent.exe', 'browser_download_url': URL}]}
+        response.json.return_value = {'tag_name': 'v3.6.3', 'assets': [{'name': 'dentweb-agent.exe', 'browser_download_url': URL}]}
         with patch.object(updater.requests, 'get', return_value=response):
             self.assertIsNone(updater.check_update('3.5.7'))
         response.json.return_value['assets'].append({'name': 'SHA256SUMS'})

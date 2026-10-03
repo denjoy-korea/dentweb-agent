@@ -29,7 +29,7 @@ class GuiCredentialTests(unittest.TestCase):
                 Path('config.json').write_text('{"agent_token":"gui-test-token"}')
                 loaded = self.method('_load_config_silent')(MagicMock())
                 self.assertEqual(loaded['agent_token'], 'gui-test-token')
-                self.assertNotIn('gui-test-token', Path('config.json').read_text())
+                self.assertNotIn('gui-test-token', Path('config.json').read_text(encoding='utf-8'))
             finally:
                 os.chdir(old)
 
@@ -62,6 +62,7 @@ class GuiCredentialTests(unittest.TestCase):
                 os.chdir(directory)
                 app = gui.AgentApp()
                 app.withdraw()
+                app._token_entry.insert(0, 'synthetic-mask-test')
                 self.assertEqual(app._token_entry.cget('show'), '•')
                 self.assertIsNone(app.runner)
             finally:
