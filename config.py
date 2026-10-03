@@ -3,9 +3,13 @@
 import json
 import os
 import sys
+import tempfile
+from getpass import getpass
+from credential_store import protect_token, unprotect_token
 from startup import is_registered, register, unregister
 
-SERVER_URL = "https://qhoyaonrkagdngglrcas.supabase.co/functions/v1"
+SERVER_URL = "https://fcsclwodponmwadyggvl.supabase.co/functions/v1"
+LEGACY_SERVER_URL = "https://qhoyaonrkagdngglrcas.supabase.co/functions/v1"
 
 def _default_exports_dir() -> str:
     """EXE 옆 exports/ 폴더 경로"""
@@ -39,15 +43,14 @@ def _interactive_setup(path: str) -> dict:
     print()
 
     while True:
-        token = input("에이전트 토큰: ").strip()
+        token = getpass("에이전트 토큰: ").strip()
         if token:
             break
         print("토큰을 입력해주세요.")
 
     cfg = {**DEFAULTS, "agent_token": token}
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    save_config(path, cfg)
 
     print()
     print(f"설정이 저장되었습니다: {os.path.abspath(path)}")
@@ -67,6 +70,12 @@ def load_config(path: str = "config.json") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
+    if not isinstance(cfg, dict):
+        raise ValueError("유효하지 않은 에이전트 설정입니다.")
+    legacy_token = bool(cfg.get("agent_token"))
+    if not legacy_token and cfg.get("agent_token_protected"):
+        cfg["agent_token"] = unprotect_token(cfg["agent_token_protected"])
+
     if not cfg.get("agent_token"):
         print("[ERROR] config.json에 agent_token이 없습니다.")
         print("config.json을 삭제하고 다시 실행하면 초기 설정이 시작됩니다.")
@@ -79,6 +88,12 @@ def load_config(path: str = "config.json") -> dict:
     cfg["download_dir"] = _default_exports_dir()
 
     cfg["server_url"] = cfg["server_url"].rstrip("/")
+    legacy_server = cfg["server_url"] == LEGACY_SERVER_URL
+    if legacy_server:
+        cfg["server_url"] = SERVER_URL
+    # Migrate before returning a credential to any HTTP client. Failure stops startup.
+    if legacy_token or legacy_server:
+        save_config(path, cfg)
     return cfg
 
 
@@ -120,3 +135,24 @@ def toggle_startup():
             print("시작프로그램에 등록되었습니다.")
         else:
             print("시작프로그램 등록에 실패했습니다.")
+
+
+def save_config(path: str, cfg: dict) -> None:
+    """All CLI/GUI saves strip in-memory credentials and atomically replace JSON."""
+    stored = {key: value for key, value in cfg.items() if key != "agent_token"}
+    if cfg.get("agent_token"):
+        stored["agent_token_protected"] = protect_token(cfg["agent_token"])
+    elif not stored.get("agent_token_protected"):
+        raise ValueError("인증정보가 없습니다.")
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=".denjoy-config-", dir=directory, text=True)
+    try:
+        os.chmod(temporary, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(stored, stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)

@@ -9,7 +9,7 @@ import os
 import sys
 import datetime
 
-from config import DEFAULTS, SERVER_URL
+from config import DEFAULTS, SERVER_URL, load_config, save_config
 from api_client import ApiClient
 from dentweb_runner import (
     DentwebRunner, DATA_STEPS, save_config_data, load_config_data, STEPS_FILE,
@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.4.0"
+VERSION = "3.6.2"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -87,21 +87,15 @@ class AgentApp(ctk.CTk):
         if not os.path.exists(path):
             return None
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            if not cfg.get("agent_token"):
-                return None
-            for key, default in DEFAULTS.items():
-                cfg.setdefault(key, default)
-            cfg["server_url"] = cfg["server_url"].rstrip("/")
-            return cfg
-        except Exception:
+            return load_config(path)
+        except (Exception, SystemExit):
+            # Never start polling with an unprotected or undecryptable token.
+            self._config_load_failed = True
             return None
 
     def _save_config(self, token: str):
         cfg = {**DEFAULTS, "agent_token": token}
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        save_config("config.json", cfg)
         self.cfg = cfg
 
     # ─── Onboarding ───
@@ -143,7 +137,7 @@ class AgentApp(ctk.CTk):
                      anchor="w").pack(fill="x", pady=(2, 8))
 
         self._token_entry = ctk.CTkEntry(
-            frame, placeholder_text="토큰 붙여넣기 (Ctrl+V)",
+            frame, placeholder_text="토큰 붙여넣기 (Ctrl+V)", show="•",
             height=42, corner_radius=10, font=ctk.CTkFont(size=13),
         )
         self._token_entry.pack(fill="x", pady=(0, 12))
@@ -157,6 +151,8 @@ class AgentApp(ctk.CTk):
         self._setup_error = ctk.CTkLabel(frame, text="", font=ctk.CTkFont(size=11),
                                          text_color=ROSE_500, wraplength=360)
         self._setup_error.pack()
+        if getattr(self, "_config_load_failed", False):
+            self._setup_error.configure(text="이 Windows 계정에서 저장된 토큰을 열 수 없습니다.\n앱에서 토큰을 다시 복사해 연결해주세요.")
 
         self._start_btn = ctk.CTkButton(
             frame, text="다음 →", height=44, corner_radius=10,
@@ -181,12 +177,17 @@ class AgentApp(ctk.CTk):
                 ApiClient(cfg["server_url"], token).ping()
                 self.after(0, lambda: self._setup_success(token))
             except Exception as e:
-                self.after(0, lambda: self._setup_fail(str(e)))
+                self.after(0, lambda error=str(e): self._setup_fail(error))
 
         threading.Thread(target=check, daemon=True).start()
 
     def _setup_success(self, token: str):
-        self._save_config(token)
+        try:
+            self._save_config(token)
+        except Exception:
+            self._setup_error.configure(text="인증정보를 안전하게 저장하지 못했습니다.\nWindows 계정과 폴더 쓰기 권한을 확인해주세요.")
+            self._start_btn.configure(state="normal", text="다음 →")
+            return
         if self._startup_var.get() and sys.platform == "win32":
             register()
         self._show_onboarding_step2()
