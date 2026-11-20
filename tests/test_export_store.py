@@ -141,12 +141,18 @@ class ExportStoreTests(unittest.TestCase):
     def test_windows_folder_acl_is_protected_and_lists_only_user_and_system(self):
         with tempfile.TemporaryDirectory() as root:
             store = ExportStore(Path(root) / "private-exports")
-            script = ("$acl = Get-Acl -LiteralPath $env:EXPORT_DIR; "
+            script = ("$ErrorActionPreference = 'Stop'; "
+                      "$acl = Get-Acl -LiteralPath $env:EXPORT_DIR; "
                       "'protected=' + $acl.AreAccessRulesProtected; "
                       "$acl.Access | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value }")
-            out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                                 capture_output=True, text=True, check=True,
-                                 env={**os.environ, "EXPORT_DIR": str(store.directory)}).stdout.split()
+            # CI는 PowerShell 7에서 Python을 띄운다. Windows PowerShell 5.1이 7의 모듈 경로를 물려받으면
+            # Get-Acl 모듈을 불러오지 못하므로 PSModulePath를 빼고 기본값을 쓰게 한다.
+            env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+            env["EXPORT_DIR"] = str(store.directory)
+            result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                                    capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            out = result.stdout.split()
             me = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
                                 check=True).stdout.strip().split(",")[1].strip('"')
             self.assertIn("protected=True", out)
