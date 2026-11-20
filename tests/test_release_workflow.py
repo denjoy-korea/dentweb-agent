@@ -35,6 +35,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn("--require-hashes --no-deps --only-binary=:all: -r requirements-bootstrap.txt", source, path)
             self.assertIn("--require-hashes --no-deps --no-build-isolation -r requirements.txt -r requirements-build.txt", source, path)
             self.assertIn("pip check", source, path)
+            # PowerShell 여러 줄 단계는 마지막 종료 코드만 보므로 설치 명령마다 확인한다
+            install = source.split("Install hash-locked dependencies")[1].split("- name:")[0]
+            self.assertEqual(install.count("if ($LASTEXITCODE) { exit $LASTEXITCODE }"), 3, path)
 
     def test_pull_request_workflow_tests_and_builds_without_publishing(self):
         source = read(".github/workflows/test.yml")

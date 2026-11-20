@@ -50,6 +50,7 @@ class RunnerSaveFlowTests(unittest.TestCase):
         self.pasted = []
         self.clicks = []
         self.writes_file = True
+        self.saves_to_target = True
         self.patches = [
             patch.object(dentweb_runner, "pyautogui", self.gui),
             patch.object(dentweb_runner, "_paste_text", side_effect=self.pasted.append),
@@ -58,6 +59,8 @@ class RunnerSaveFlowTests(unittest.TestCase):
             patch.object(dentweb_runner.DentwebRunner, "_activate_dentweb", return_value=True),
             patch.object(dentweb_runner, "legacy_exports_directory", return_value=self.legacy),
             patch.object(dentweb_runner.time, "sleep", lambda _s: None),
+            # Windows CI에는 실제 저장 창이 없으므로 '맨 앞이 저장 창'으로 둔다(창 확인은 따로 시험)
+            patch.object(dentweb_runner, "_foreground_is_save_dialog", return_value=True),
         ]
         for p in self.patches:
             p.start()
@@ -71,7 +74,8 @@ class RunnerSaveFlowTests(unittest.TestCase):
         self.clicks.append((x, y))
         # 덴트웹이 '저장(S)'을 누르면 파일 이름 칸에 들어간 경로로 저장한다고 흉내 낸다.
         if (x, y) == SAVE_XY and self.writes_file:
-            Path(self.pasted[-1]).write_bytes(b"xlsx-fixture")
+            name = self.pasted[-1] if self.saves_to_target else str(self.exports / "임플란트수술통계_20261121.xlsx")
+            Path(name).write_bytes(b"xlsx-fixture")
 
     def test_load_config_drops_retired_overwrite_confirm_step(self):
         names = [s["name"] for s in self.runner._data["data_steps"]]
@@ -94,17 +98,57 @@ class RunnerSaveFlowTests(unittest.TestCase):
         self.runner.cleanup(path)
         self.assertEqual(list(self.exports.iterdir()), [])
 
-    def test_timeout_removes_target_and_ignores_other_workbooks(self):
+    def test_timeout_is_a_failure_and_never_picks_another_workbook(self):
         self.writes_file = False
         self.exports.mkdir(parents=True)
-        other = self.exports / "patient-report.xlsx"
-        other.write_bytes(b"preserve")
+        other = self.exports / "earlier.xlsx"
+        other.write_bytes(b"x")
+        os.utime(other, (time.time() - 600, time.time() - 600))
         self.runner.download_timeout = 0
         logs = []
-        self.assertIsNone(self.runner.download_excel(log_callback=logs.append))
-        self.assertTrue(other.exists())
-        self.assertEqual([p.name for p in self.exports.iterdir()], ["patient-report.xlsx"])
-        self.assertTrue(any("같은 Windows 계정" in line for line in logs))
+        with self.assertRaisesRegex(dentweb_runner.ExportFailed, "같은 Windows 계정"):
+            self.runner.download_excel(log_callback=logs.append)
+        self.assertEqual([p.name for p in self.exports.iterdir()], ["earlier.xlsx"])
+
+    def test_late_save_of_target_is_removed(self):
+        # 시간 초과 직전에 대상 파일이 생겨도(늦은 저장) 실패로 끝나면 지운다
+        self.runner.download_timeout = 0
+        with self.assertRaises(dentweb_runner.ExportFailed):
+            self.runner.download_excel()
+        self.assertEqual([p for p in self.exports.iterdir() if p.suffix == ".xlsx"], [])
+
+    def test_default_name_save_is_removed_and_reported_as_failure(self):
+        self.saves_to_target = False
+        self.runner.download_timeout = 0
+        with self.assertRaisesRegex(dentweb_runner.ExportFailed, "다른 이름으로 저장"):
+            self.runner.download_excel()
+        self.assertEqual(list(self.exports.iterdir()), [])
+
+    def test_no_keys_are_sent_unless_the_save_dialog_is_in_front(self):
+        with patch.object(dentweb_runner, "_foreground_is_save_dialog", return_value=False), \
+             patch.object(dentweb_runner.time, "monotonic", side_effect=[0, 0, 100, 100, 100]):
+            with self.assertRaisesRegex(dentweb_runner.ExportFailed, "저장 창"):
+                self.runner.download_excel()
+        self.gui.hotkey.assert_not_called()
+        self.gui.press.assert_not_called()
+        self.assertEqual(self.pasted, [])
+        self.assertEqual(list(self.exports.iterdir()), [])
+
+    def test_every_run_prunes_leftovers(self):
+        self.exports.mkdir(parents=True)
+        leftover = self.exports / ("denjoy-export-" + "b" * 32 + ".xlsx")
+        default_name = self.exports / "임플란트수술통계_20261120.xlsx"
+        for path in (leftover, default_name):
+            path.write_bytes(b"patient")
+            os.utime(path, (time.time() - 2 * 3600, time.time() - 2 * 3600))
+        self.runner._export_store()  # 첫 정리는 이미 지난 상태(오래 켜 둔 에이전트)
+        for path in (leftover, default_name):
+            path.write_bytes(b"patient")
+            os.utime(path, (time.time() - 2 * 3600, time.time() - 2 * 3600))
+        with patch.object(dentweb_runner.DentwebRunner, "excel_has_data", return_value=False):
+            self.assertIsNone(self.runner.download_excel())
+        self.assertFalse(leftover.exists())
+        self.assertFalse(default_name.exists())
 
     def test_empty_workbook_is_removed(self):
         with patch.object(dentweb_runner.DentwebRunner, "excel_has_data", return_value=False):

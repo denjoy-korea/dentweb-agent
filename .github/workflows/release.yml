@@ -27,9 +27,13 @@ jobs:
           python-version: '3.11'
       - name: Install hash-locked dependencies
         run: |
+          # PowerShell 여러 줄 단계는 마지막 명령의 종료 코드만 본다. 명령마다 확인한다.
           python -m pip install --require-hashes --no-deps --only-binary=:all: -r requirements-bootstrap.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip install --require-hashes --no-deps --no-build-isolation -r requirements.txt -r requirements-build.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           python -m pip check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Windows credential, config, updater, export and GUI regression tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Validate tag and source version

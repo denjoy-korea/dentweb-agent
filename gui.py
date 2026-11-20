@@ -533,6 +533,7 @@ class AgentApp(ctk.CTk):
 
     def _upload_export(self, excel_path, upload_url, report):
         """업로드하고 (성공 여부, 문구)를 돌려준다. 업로드·보고가 실패하거나 예외가 나도 파일을 지운다."""
+        runner = self.runner  # 업로드 중에 좌표 설정·시험이 끝나 러너가 바뀌어도 이 러너로 지운다
         try:
             upload_result = self.api.upload_file(upload_url, excel_path)
             if upload_result.get("success"):
@@ -548,8 +549,8 @@ class AgentApp(ctk.CTk):
             return False, error_msg
         finally:
             try:
-                self.runner.cleanup(excel_path)
-            except OSError as cleanup_error:
+                runner.cleanup(excel_path)
+            except Exception as cleanup_error:
                 self.after(0, lambda e=cleanup_error: self._gui_log(f"임시 파일 정리 실패: {e}", "ERROR"))
 
     def _poll_loop(self):
@@ -631,7 +632,10 @@ class AgentApp(ctk.CTk):
                 self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
 
             except Exception as e:
+                self.after(0, lambda: self._restore_after_automation())
                 self.after(0, lambda e=e: self._gui_log(f"에러: {e}", "ERROR"))
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.after(0, lambda t=now_str, e=e: self._update_last_run(t, f"실패 — {e}", ROSE_500))
                 try:
                     self.api.report_run("failed", str(e)[:1000])
                 except Exception:
@@ -702,6 +706,8 @@ class AgentApp(ctk.CTk):
             except Exception as e:
                 self.after(0, lambda: self._restore_after_automation())
                 self.after(0, lambda e=e: self._gui_log(f"에러: {e}", "ERROR"))
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                self.after(0, lambda t=now_str, e=e: self._update_last_run(t, f"실패 — {e}", ROSE_500))
             finally:
                 self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
                 self.after(0, lambda: self._run_now_btn.configure(state="normal", text="▶  지금 실행"))

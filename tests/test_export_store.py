@@ -1,6 +1,7 @@
 """v3.6.5 수술 기록 파일 보호: 전용 폴더, 고유 이름, 소유 파일만 정리."""
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
@@ -39,9 +40,12 @@ class ExportStoreTests(unittest.TestCase):
             ]
             ExportStore(Path(root) / "private-exports", run=run, windows=True)
             whoami, icacls = run.call_args_list
-            self.assertEqual(whoami.args[0][0], "whoami")
+            # EXE 폴더의 같은 이름 파일이 아니라 System32의 도구를 부른다
+            self.assertTrue(os.path.isabs(whoami.args[0][0]) or whoami.args[0][0].startswith("C:"))
+            self.assertTrue(whoami.args[0][0].lower().endswith(os.path.join("system32", "whoami.exe").lower()))
+            self.assertIs(whoami.kwargs["stdin"], subprocess.DEVNULL)
             command = icacls.args[0]
-            self.assertEqual(command[0], "icacls")
+            self.assertTrue(command[0].lower().endswith(os.path.join("system32", "icacls.exe").lower()))
             self.assertIn("/inheritance:r", command)
             self.assertIn("*S-1-5-21-1-2-3-1001:(OI)(CI)F", command)
             self.assertIn("*S-1-5-18:(OI)(CI)F", command)
@@ -66,25 +70,44 @@ class ExportStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "심볼릭"):
                 ExportStore(link)
 
-    def test_only_owned_old_exports_are_pruned_and_cleanup_is_idempotent(self):
+    def test_prune_removes_old_workbooks_in_the_private_folder_only(self):
         with tempfile.TemporaryDirectory() as root:
             store = ExportStore(root)
             own = Path(store.allocate())
             own.write_bytes(b"fixture")
             fresh = Path(store.allocate())
             fresh.write_bytes(b"fixture")
-            unrelated = Path(root) / "patient.xlsx"
-            unrelated.write_bytes(b"preserve")
-            old = time.time() - 172800
-            os.utime(own, (old, old))
-            os.utime(unrelated, (old, old))
+            default_name = Path(root) / "임플란트수술통계_20261121.xlsx"  # 이름 입력 실패로 덴트웹 기본 이름 저장
+            default_name.write_bytes(b"patient")
+            note = Path(root) / "readme.txt"
+            note.write_bytes(b"keep")
+            old = time.time() - 2 * 3600
+            for path in (own, default_name, note):
+                os.utime(path, (old, old))
             store.prune()
             self.assertFalse(own.exists())
+            self.assertFalse(default_name.exists())
             self.assertTrue(fresh.exists())
-            self.assertTrue(unrelated.exists())
+            self.assertTrue(note.exists())
             store.cleanup(fresh)
             store.cleanup(fresh)
             self.assertFalse(fresh.exists())
+
+    def test_remove_strays_deletes_only_new_non_owned_workbooks(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = ExportStore(root)
+            before = Path(root) / "earlier.xlsx"
+            before.write_bytes(b"x")
+            os.utime(before, (time.time() - 600, time.time() - 600))
+            since = time.time() - 5
+            stray = Path(root) / "default-name.xlsx"
+            stray.write_bytes(b"patient")
+            own = Path(store.allocate())
+            own.write_bytes(b"x")
+            self.assertEqual(store.remove_strays(since), ["default-name.xlsx"])
+            self.assertFalse(stray.exists())
+            self.assertTrue(before.exists())
+            self.assertTrue(own.exists())
 
     def test_cleanup_never_touches_files_outside_or_symbolic_links(self):
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as other:
@@ -113,6 +136,21 @@ class ExportStoreTests(unittest.TestCase):
                     os.utime(path, (1, 1))
                 store.prune()
             self.assertEqual(len(list(Path(root).iterdir())), 2)
+
+    @unittest.skipUnless(os.name == "nt", "real Windows ACL")
+    def test_windows_folder_acl_is_protected_and_lists_only_user_and_system(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = ExportStore(Path(root) / "private-exports")
+            script = ("$acl = Get-Acl -LiteralPath $env:EXPORT_DIR; "
+                      "'protected=' + $acl.AreAccessRulesProtected; "
+                      "$acl.Access | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value }")
+            out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                                 capture_output=True, text=True, check=True,
+                                 env={**os.environ, "EXPORT_DIR": str(store.directory)}).stdout.split()
+            me = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                check=True).stdout.strip().split(",")[1].strip('"')
+            self.assertIn("protected=True", out)
+            self.assertEqual(set(line for line in out if line.startswith("S-1-")), {me, "S-1-5-18"})
 
     def test_default_directory_is_under_local_app_data(self):
         with patch.dict(os.environ, {"LOCALAPPDATA": "/fixture/local"}):

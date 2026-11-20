@@ -47,6 +47,23 @@ class GuiCleanupTests(unittest.TestCase):
         obj.api.report_run.assert_not_called()
         obj.after.assert_called_once()
 
+    def test_cleanup_uses_the_runner_that_produced_the_file(self):
+        upload_export = self.upload_export()
+        obj = Mock()
+        original = obj.runner
+        replacement = Mock()
+
+        def swap(*_args):
+            obj.runner = replacement  # 업로드 중에 좌표 설정이 끝나 러너가 바뀜
+            return {"success": True}
+
+        obj.api.upload_file.side_effect = swap
+        original.cleanup.side_effect = RuntimeError("not an OSError")
+        upload_export(obj, "owned.xlsx", "https://fixture/upload", False)
+        original.cleanup.assert_called_once_with("owned.xlsx")
+        replacement.cleanup.assert_not_called()
+        obj.after.assert_called_once()
+
     def test_both_run_paths_use_the_cleanup_helper(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
