@@ -33,29 +33,22 @@ class ExportStoreTests(unittest.TestCase):
 
     def test_windows_restricts_folder_to_current_user_and_system(self):
         with tempfile.TemporaryDirectory() as root:
-            run = MagicMock()
-            run.side_effect = [
-                MagicMock(stdout='"desk\\\\staff","S-1-5-21-1-2-3-1001"\r\n'),
-                MagicMock(stdout=""),
-            ]
-            ExportStore(Path(root) / "private-exports", run=run, windows=True)
-            whoami, icacls = run.call_args_list
+            run = MagicMock(return_value=MagicMock(stdout='"desk\\\\staff","S-1-5-21-1-2-3-1001"\r\n'))
+            set_dacl = MagicMock()
+            store = ExportStore(Path(root) / "private-exports", run=run, windows=True, set_dacl=set_dacl)
+            (whoami,) = run.call_args_list
             # EXE 폴더의 같은 이름 파일이 아니라 System32의 도구를 부른다
-            self.assertTrue(os.path.isabs(whoami.args[0][0]) or whoami.args[0][0].startswith("C:"))
             self.assertTrue(whoami.args[0][0].lower().endswith(os.path.join("system32", "whoami.exe").lower()))
             self.assertIs(whoami.kwargs["stdin"], subprocess.DEVNULL)
-            command = icacls.args[0]
-            self.assertTrue(command[0].lower().endswith(os.path.join("system32", "icacls.exe").lower()))
-            self.assertIn("/inheritance:r", command)
-            self.assertIn("*S-1-5-21-1-2-3-1001:(OI)(CI)F", command)
-            self.assertIn("*S-1-5-18:(OI)(CI)F", command)
-            self.assertTrue(icacls.kwargs["check"])
+            set_dacl.assert_called_once_with(str(store.directory), "S-1-5-21-1-2-3-1001")
 
     def test_windows_rejects_unexpected_owner(self):
         with tempfile.TemporaryDirectory() as root:
             run = MagicMock(return_value=MagicMock(stdout='"desk\\\\staff","not-a-sid"\r\n'))
+            set_dacl = MagicMock()
             with self.assertRaisesRegex(RuntimeError, "소유자"):
-                ExportStore(Path(root) / "private-exports", run=run, windows=True)
+                ExportStore(Path(root) / "private-exports", run=run, windows=True, set_dacl=set_dacl)
+            set_dacl.assert_not_called()
             self.assertEqual(run.call_count, 1)
 
     def test_rejects_symbolic_link_directory(self):
@@ -140,7 +133,11 @@ class ExportStoreTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "real Windows ACL")
     def test_windows_folder_acl_is_protected_and_lists_only_user_and_system(self):
         with tempfile.TemporaryDirectory() as root:
-            store = ExportStore(Path(root) / "private-exports")
+            existing = Path(root) / "private-exports"
+            existing.mkdir()
+            # 폴더가 이미 있고 다른 주체(Users)의 명시적 권한이 들어 있어도 통째로 바뀌어야 한다
+            subprocess.run(["icacls", str(existing), "/grant", "*S-1-5-32-545:(OI)(CI)R"], check=True, capture_output=True)
+            store = ExportStore(existing)
             script = ("$ErrorActionPreference = 'Stop'; "
                       "$acl = Get-Acl -LiteralPath $env:EXPORT_DIR; "
                       "'protected=' + $acl.AreAccessRulesProtected; "

@@ -48,6 +48,49 @@ def _no_window():
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def set_private_dacl(path: str, sid: str):
+    """폴더 권한을 '현재 사용자·SYSTEM 모두 허용, 상속 끊음' 두 항목으로 통째로 바꾼다.
+
+    icacls /grant:r은 지정한 주체만 바꾸고 다른 명시적 권한(관리자 권한 실행 때의 Administrators 등)을
+    남기므로, SDDL로 만든 보호된 DACL을 SetNamedSecurityInfoW로 넣는다.
+    """
+    import ctypes
+    from ctypes import wintypes
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.ULONG)]
+    advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    advapi.GetSecurityDescriptorDacl.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+    advapi.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+    advapi.SetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    advapi.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+
+    if not re.fullmatch(r"S-1-[0-9-]+", sid):
+        raise RuntimeError("내보내기 폴더의 소유자를 확인할 수 없습니다")
+    sddl = f"D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)"
+    descriptor = ctypes.c_void_p()
+    if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), None):
+        raise OSError(ctypes.get_last_error(), "내보내기 폴더 권한을 만들 수 없습니다")
+    try:
+        present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
+        if not advapi.GetSecurityDescriptorDacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)):
+            raise OSError(ctypes.get_last_error(), "내보내기 폴더 권한을 읽을 수 없습니다")
+        se_file_object = 1
+        dacl_information = 0x00000004
+        protected_dacl_information = 0x80000000
+        result = advapi.SetNamedSecurityInfoW(str(path), se_file_object, dacl_information | protected_dacl_information,
+                                              None, None, dacl, None)
+        if result != 0:
+            raise OSError(result, "내보내기 폴더 권한을 바꿀 수 없습니다")
+    finally:
+        kernel.LocalFree(descriptor)
+
+
 def _is_workbook(entry: Path) -> bool:
     return entry.suffix.lower() == ".xlsx" and not entry.is_symlink() and entry.is_file()
 
@@ -63,7 +106,7 @@ def remove_owned(directory, path):
 
 
 class ExportStore:
-    def __init__(self, directory=None, run=subprocess.run, windows=None):
+    def __init__(self, directory=None, run=subprocess.run, windows=None, set_dacl=None):
         self.directory = Path(directory) if directory else default_directory()
         if self.directory.is_symlink():
             raise RuntimeError("내보내기 폴더가 바로가기(심볼릭 링크)입니다")
@@ -71,22 +114,20 @@ class ExportStore:
         if self.directory.is_symlink() or not self.directory.is_dir():
             raise RuntimeError("내보내기 폴더를 만들 수 없습니다")
         if (os.name == "nt") if windows is None else windows:
-            self._restrict_windows(run)
+            self._restrict_windows(run, set_dacl or set_private_dacl)
         else:
             self.directory.chmod(0o700)
         self.prune()
 
-    def _restrict_windows(self, run):
+    def _restrict_windows(self, run, set_dacl):
         result = run([_system_tool("whoami.exe"), "/user", "/fo", "csv", "/nh"], check=True,
                      capture_output=True, text=True, errors="replace",
                      stdin=subprocess.DEVNULL, creationflags=_no_window())
         sid = next(csv.reader(io.StringIO(result.stdout)))[1]
         if not re.fullmatch(r"S-1-[0-9-]+", sid):
             raise RuntimeError("내보내기 폴더의 소유자를 확인할 수 없습니다")
-        # 상속을 끊고 현재 사용자와 SYSTEM만 남긴다.
-        run([_system_tool("icacls.exe"), str(self.directory), "/inheritance:r", "/grant:r",
-             "*" + sid + ":(OI)(CI)F", "*" + SYSTEM_SID + ":(OI)(CI)F"],
-            check=True, capture_output=True, stdin=subprocess.DEVNULL, creationflags=_no_window())
+        # 상속을 끊고 현재 사용자와 SYSTEM만 남긴다(다른 명시적 권한도 지운다).
+        set_dacl(str(self.directory), sid)
 
     def allocate(self) -> str:
         return str(self.directory / ("denjoy-export-" + uuid.uuid4().hex + ".xlsx"))
