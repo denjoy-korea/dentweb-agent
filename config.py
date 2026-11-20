@@ -7,17 +7,14 @@ import tempfile
 from getpass import getpass
 from credential_store import protect_token, unprotect_token
 from startup import is_registered, register, unregister
+from export_store import default_directory as default_export_directory
 
 SERVER_URL = "https://fcsclwodponmwadyggvl.supabase.co/functions/v1"
 LEGACY_SERVER_URL = "https://qhoyaonrkagdngglrcas.supabase.co/functions/v1"
 
 def _default_exports_dir() -> str:
-    """EXE 옆 exports/ 폴더 경로"""
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "exports")
+    """내보내기 전용 폴더(%LOCALAPPDATA%\\DenJOY\\private-exports). 3.6.4까지는 EXE 옆 exports/였다."""
+    return str(default_export_directory())
 
 
 DEFAULTS = {
@@ -84,7 +81,7 @@ def load_config(path: str = "config.json") -> dict:
     for key, default in DEFAULTS.items():
         cfg.setdefault(key, default)
 
-    # EXE 위치가 변경되어도 exports 폴더 경로를 항상 최신으로 유지
+    # 예전 설정의 EXE 옆 exports 경로 대신 항상 전용 폴더를 쓴다
     cfg["download_dir"] = _default_exports_dir()
 
     cfg["server_url"] = cfg["server_url"].rstrip("/")

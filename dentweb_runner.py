@@ -12,6 +12,7 @@
 """
 
 import os
+import sys
 import json
 import time
 import glob
@@ -19,6 +20,7 @@ import pyautogui
 import pyperclip
 from PIL import Image
 from openpyxl import load_workbook
+from export_store import ExportStore, legacy_exports_directory, remove_owned
 
 
 STEPS_FILE = "dentweb_steps.json"
@@ -48,6 +50,58 @@ def _win32_click(x: int, y: int, activate_first: bool = False):
     time.sleep(0.1)
 
 
+class ExportFailed(RuntimeError):
+    """덴트웹 자동화가 실패했다(데이터 없음과 구별해 서버에 'failed'로 보고한다)."""
+
+
+_DIALOG_EDIT_CLASSES = {"Edit", "ComboBoxEx32"}
+
+
+def _foreground_is_save_dialog() -> bool:
+    """맨 앞 창이 파일 이름 칸이 있는 표준 대화상자(#32770)인지 본다.
+
+    덴트웹 알림 창도 #32770이지만 입력 칸이 없다. 저장 창이 아닌데 Ctrl+A·붙여넣기를 보내면
+    덴트웹의 다른 입력란 내용을 바꿀 수 있으므로, 이 확인을 통과할 때만 키를 보낸다.
+    """
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+
+    def class_name(handle) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(handle, buf, 256)
+        return buf.value
+
+    if class_name(hwnd) != "#32770":
+        return False
+    found = []
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def visit(child, _lparam):
+        if class_name(child) in _DIALOG_EDIT_CLASSES:
+            found.append(child)
+            return False
+        return True
+
+    user32.EnumChildWindows(hwnd, enum_proc(visit), 0)
+    return bool(found)
+
+
+def _wait_for_save_dialog(timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if _foreground_is_save_dialog():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.3)
+
+
 # --- 클릭 시퀀스 정의 ---
 
 DATA_STEPS = [
@@ -61,10 +115,13 @@ DATA_STEPS = [
     {"name": "date_end_today", "label": "'까지' 달력 하단 '오늘' 버튼 (자동 조회됨)", "x": None, "y": None, "wait_after": 5.0},
     {"name": "export_btn", "label": "'엑셀저장' 버튼", "x": None, "y": None, "wait_after": 3.0},
     # ── 저장 다이얼로그 단계 ──────────────────────────────────────
-    # 폴더 이동은 Alt+D 주소창 입력 방식으로 자동 처리 (좌표 불필요)
+    # 폴더 이동과 파일 이름은 키보드로 자동 처리 (좌표 불필요)
     {"name": "save_dialog_save_btn",    "label": "저장 창 — '저장(S)' 버튼", "x": None, "y": None, "wait_after": 2.0},
-    {"name": "save_dialog_confirm_yes", "label": "덮어쓰기 확인 팝업 — '예(Y)' 버튼 (같은 날 재실행 시)", "x": None, "y": None, "wait_after": 2.0},
 ]
+
+# 3.6.5부터 쓰지 않는 단계. 실행마다 고유한 파일 이름으로 저장하므로 덮어쓰기 확인 창이 뜨지 않는다.
+# 창이 없을 때 저장된 좌표를 누르면 그 아래 덴트웹 화면을 누르게 되므로, 예전 설정에 있어도 읽지 않는다.
+RETIRED_STEPS = {"save_dialog_confirm_yes"}
 
 
 def _get_template_path(step_name: str) -> str:
@@ -136,10 +193,14 @@ def load_config_data(path: str = STEPS_FILE) -> dict | None:
     if isinstance(data, list):
         return None
 
+    data["data_steps"] = [
+        step for step in data.get("data_steps", []) if step.get("name") not in RETIRED_STEPS
+    ]
+
     # 저장 다이얼로그 단계는 선택 사항 — 미설정이어도 run 가능 (폴백 처리)
     OPTIONAL_STEPS = {
         "dentweb_open",
-        "save_dialog_save_btn", "save_dialog_confirm_yes",
+        "save_dialog_save_btn",
     }
 
     for step in data.get("data_steps", []):
@@ -217,6 +278,13 @@ class DentwebRunner:
         self.download_dir = cfg["download_dir"]
         self.download_timeout = cfg.get("download_timeout_seconds", 30)
         self._data = load_config_data()
+        self._exports = None
+
+    def _export_store(self) -> ExportStore:
+        """전용 폴더는 실행할 때 만든다(창을 여는 것만으로는 폴더·권한을 바꾸지 않는다)."""
+        if self._exports is None:
+            self._exports = ExportStore(self.download_dir)
+        return self._exports
 
     def is_configured(self) -> bool:
         return self._data is not None
@@ -330,29 +398,36 @@ class DentwebRunner:
         except Exception:
             return False
 
-    def _wait_for_download(self, after_time: float) -> str | None:
-        """exports 폴더에서 after_time 이후에 저장된 엑셀 파일 반환"""
-        deadline = time.time() + self.download_timeout
-        while time.time() < deadline:
-            candidates = [
-                f for f in glob.glob(os.path.join(self.download_dir, "*.xlsx"))
-                if os.path.getmtime(f) >= after_time
-            ]
-            if candidates:
-                time.sleep(0.5)  # 파일 쓰기 완료 대기
-                return max(candidates, key=os.path.getmtime)
+    def _wait_for_download(self, target: str) -> str | None:
+        """이번 실행에 고른 그 파일만 기다린다. 크기가 두 번 연속 같으면 저장이 끝난 것으로 본다."""
+        deadline = time.monotonic() + self.download_timeout
+        previous = None
+        stable = 0
+        while time.monotonic() < deadline:
+            if os.path.isfile(target):
+                size = os.path.getsize(target)
+                stable = stable + 1 if size and size == previous else 0
+                previous = size
+                if stable >= 2:
+                    return target
             time.sleep(1)
         return None
 
     def _cleanup_old_exports(self, keep_days: int = 7, log_callback=None):
-        """exports 폴더에서 keep_days일 이상 지난 엑셀 파일 삭제"""
+        """3.6.4까지 쓰던 EXE 옆 exports 폴더에서 keep_days일 이상 지난 엑셀 파일 삭제.
+
+        3.6.5는 그 폴더에 쓰지 않는다. 남아 있던 환자 파일이 정해진 기간 안에 비워지게 정리만 계속한다.
+        """
         def _log(msg):
             if log_callback:
                 log_callback(msg)
 
+        legacy_dir = str(legacy_exports_directory())
+        if not os.path.isdir(legacy_dir) or os.path.abspath(legacy_dir) == os.path.abspath(self.download_dir):
+            return
         cutoff = time.time() - keep_days * 86400
         removed = 0
-        for f in glob.glob(os.path.join(self.download_dir, "*.xlsx")):
+        for f in glob.glob(os.path.join(legacy_dir, "*.xlsx")):
             try:
                 if os.path.getmtime(f) < cutoff:
                     os.remove(f)
@@ -364,14 +439,48 @@ class DentwebRunner:
             _log(f"총 {removed}개 파일 정리 완료")
 
     def download_excel(self, log_callback=None) -> str | None:
-        """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별"""
+        """전체 자동화: 덴트웹 활성화 → 엑셀 저장 → 데이터 유무 판별.
+
+        - 성공: 파일 경로. 부르는 쪽이 업로드 뒤 cleanup()으로 지운다.
+        - 데이터 없음(빈 파일): None.
+        - 실패: ExportFailed(서버에 'failed'로 보고한다).
+        실패·데이터 없음·예외로 끝나면 이번 실행의 파일을 여기서 지운다.
+        """
         def _log(msg):
             if log_callback:
                 log_callback(msg)
 
         if not self._data:
             _log("설정 데이터 없음")
-            return None
+            raise ExportFailed("클릭 좌표 설정이 없습니다")
+
+        self._cleanup_old_exports(keep_days=7, log_callback=log_callback)
+        try:
+            store = self._export_store()
+            store.prune()
+        except Exception as e:
+            _log(f"저장 폴더를 준비하지 못했습니다: {e}")
+            raise ExportFailed(f"저장 폴더를 준비하지 못했습니다: {e}") from e
+
+        target = store.allocate()
+        started_at = time.time() - 2
+        completed = False
+        try:
+            excel_path = self._export_to(target, store, started_at, _log, log_callback)
+            completed = excel_path is not None
+            return excel_path
+        finally:
+            if not completed:
+                try:
+                    store.cleanup(target)
+                except OSError as e:
+                    _log(f"임시 파일 정리 실패: {e}")
+
+    def _export_to(self, target: str, store: ExportStore, started_at: float, _log, log_callback) -> str | None:
+        """성공하면 파일 경로, 데이터가 없으면 None. 실패는 ExportFailed."""
+        def fail(message):
+            _log(message)
+            raise ExportFailed(message)
 
         # 1. 덴트웹 창 열기 (작업표시줄 아이콘 클릭 — 좌표 설정된 경우)
         open_step = self._get_save_step("dentweb_open")
@@ -383,8 +492,7 @@ class DentwebRunner:
         # 2. 덴트웹 창 자동 탐색 + 활성화
         _log("덴트웹 창 탐색 중...")
         if not self._activate_dentweb(log_callback=log_callback):
-            _log("덴트웹 창을 찾을 수 없습니다")
-            return None
+            fail("덴트웹 창을 찾을 수 없습니다")
         _log("덴트웹 창 활성화 완료 — 2초 대기")
         time.sleep(2)
 
@@ -398,8 +506,7 @@ class DentwebRunner:
             if step.get("name") == "export_btn":
                 break
             if not _find_and_click(step, log_callback, activate_first=is_first_click):
-                _log(f"단계 실패: {step['label']}")
-                return None
+                fail(f"단계 실패: {step['label']}")
             is_first_click = False  # 이후 단계는 이미 활성화됨
             time.sleep(step.get("wait_after", 1.5))
 
@@ -410,20 +517,18 @@ class DentwebRunner:
                 export_step = step
                 break
         if not export_step:
-            _log("엑셀저장 버튼 설정 없음")
-            return None
+            fail("엑셀저장 버튼 설정 없음")
 
-        export_start_time = time.time()  # 파일 감지 기준 시각
         if not _find_and_click(export_step, log_callback):
-            _log("엑셀저장 버튼 클릭 실패")
-            return None
+            fail("엑셀저장 버튼 클릭 실패")
         time.sleep(export_step.get("wait_after", 3.0))
 
-        # 4. "다른 이름으로 저장" 다이얼로그 처리
+        # 4. "다른 이름으로 저장" 다이얼로그 처리 — 저장 창이 맨 앞일 때만 키를 보낸다
         _log("저장 다이얼로그 처리 중...")
+        if not _wait_for_save_dialog():
+            fail("저장 창이 뜨지 않았습니다(키 입력을 보내지 않았습니다)")
 
-        # 4a. Alt+D로 주소창 포커스 → exports 폴더 경로 붙여넣기 → Enter로 이동
-        #     (더블클릭 방식 대신 경로 직접 입력 — 폴더 좌표 설정 불필요)
+        # 4a. Alt+D로 주소창 포커스 → 전용 폴더 경로 붙여넣기 → Enter로 이동
         _log(f"저장 위치 이동: {self.download_dir}")
         pyautogui.hotkey("alt", "d")
         time.sleep(0.4)
@@ -431,6 +536,17 @@ class DentwebRunner:
         time.sleep(0.3)
         pyautogui.press("enter")
         time.sleep(1.2)  # 폴더 탐색 완료 대기
+
+        # 4b. Alt+N으로 '파일 이름' 칸 → 이번 실행의 고유 이름(전체 경로)으로 바꾼다
+        if not _foreground_is_save_dialog():
+            fail("저장 창이 앞에 없습니다(파일 이름을 입력하지 않았습니다)")
+        _log(f"파일 이름 입력: {os.path.basename(target)}")
+        pyautogui.hotkey("alt", "n")
+        time.sleep(0.3)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.1)
+        _paste_text(target)
+        time.sleep(0.3)
 
         # 4c. '저장(S)' 버튼 클릭
         save_btn_step = self._get_save_step("save_dialog_save_btn")
@@ -443,42 +559,29 @@ class DentwebRunner:
             pyautogui.press("enter")
             time.sleep(2)
 
-        # 5. 덮어쓰기 확인 팝업 — '예(Y)' 클릭
-        confirm_step = self._get_save_step("save_dialog_confirm_yes")
-        if confirm_step:
-            _log("덮어쓰기 확인 '예(Y)' 클릭")
-            _win32_click(int(confirm_step["x"]), int(confirm_step["y"]))
-            time.sleep(confirm_step.get("wait_after", 2.0))
-        else:
-            _log("[경고] 예(Y) 버튼 좌표 미설정 — Enter로 폴백")
-            pyautogui.press("enter")
-            time.sleep(2)
+        # 고유 이름이라 덮어쓰기 확인 창이 뜨지 않는다. 확인 창 좌표·Enter를 누르지 않는다.
 
-        # 6. 파일 저장 대기
+        # 5. 파일 저장 대기
         _log("엑셀 파일 저장 대기 중...")
-        excel_path = self._wait_for_download(after_time=export_start_time)
+        excel_path = self._wait_for_download(target)
         if not excel_path:
-            _log("엑셀 파일 저장 시간 초과")
-            return None
+            strays = store.remove_strays(since=started_at)
+            if strays:
+                fail("파일 이름을 넣지 못해 다른 이름으로 저장됐습니다. 그 파일은 지웠습니다")
+            _log("저장 폴더에 쓰지 못했을 수 있습니다. 덴트웹과 같은 Windows 계정으로 에이전트를 실행하세요")
+            fail("엑셀 파일 저장 시간 초과(덴트웹과 같은 Windows 계정으로 실행하는지 확인하세요)")
         _log(f"엑셀 파일 저장 완료: {os.path.basename(excel_path)}")
 
-        # 7. "수술기록지" 시트 2행 데이터 확인
+        # 6. "수술기록지" 시트 2행 데이터 확인
         _log("수술기록지 데이터 확인 중...")
         if not self.excel_has_data(excel_path):
             _log("수술기록지에 데이터 없음 (빈 파일)")
-            self.cleanup(excel_path)
             return None
 
         _log("수술 기록 데이터 확인 완료")
-
-        # 7일 이상 지난 파일 정리
-        self._cleanup_old_exports(keep_days=7, log_callback=log_callback)
-
         return excel_path
 
     def cleanup(self, file_path: str):
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except OSError:
-            pass
+        """이번 실행이 만든 파일만 지운다. 폴더·권한을 다시 만들지 않는다.
+        지우지 못하면 OSError를 낸다(부르는 쪽이 기록하고, 다음 실행의 정리가 지운다)."""
+        remove_owned(self.download_dir, file_path)
