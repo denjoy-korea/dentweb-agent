@@ -2,7 +2,7 @@
   "server_url": "https://<project-ref>.supabase.co/functions/v1",
   "agent_token": "<UUID from app settings>",
   "poll_interval_seconds": 30,
-  "download_dir": "C:\\Users\\<user>\\Downloads",
+  "download_dir": "C:\\Users\\<user>\\AppData\\Local\\DenJOY\\private-exports",
   "dentweb_window_title": "DentWeb",
   "click_delay_ms": 300,
   "download_timeout_seconds": 30,

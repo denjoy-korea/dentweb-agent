@@ -35,19 +35,10 @@ def _cleanup_update_files():
             pass
 
 
-def _ensure_exports_dir():
-    """EXE 옆 exports/ 폴더 자동 생성"""
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    os.makedirs(os.path.join(base, "exports"), exist_ok=True)
-
-
 def main():
     _setup_dpi_awareness()
     _cleanup_update_files()
-    _ensure_exports_dir()
+    # 내보내기 전용 폴더는 첫 실행 때 권한과 함께 만든다(dentweb_runner). EXE 옆 exports/는 더 만들지 않는다.
 
     if len(sys.argv) > 1 and sys.argv[1] == "--startup":
         from config import toggle_startup

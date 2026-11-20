@@ -20,7 +20,7 @@ from startup import is_registered, register, unregister
 from updater import check_update, download_update, apply_update
 import pyautogui
 
-VERSION = "3.6.3"
+VERSION = "3.6.5"
 
 # --- 색상 ---
 EMERALD_600 = "#059669"
@@ -531,6 +531,27 @@ class AgentApp(ctk.CTk):
             secs += 86400  # 이미 지났으면 내일
         return secs
 
+    def _upload_export(self, excel_path, upload_url, report):
+        """업로드하고 (성공 여부, 문구)를 돌려준다. 업로드·보고가 실패하거나 예외가 나도 파일을 지운다."""
+        try:
+            upload_result = self.api.upload_file(upload_url, excel_path)
+            if upload_result.get("success"):
+                inserted = upload_result.get("inserted", 0)
+                skipped = upload_result.get("skipped", 0)
+                msg = f"{inserted}건 업로드, {skipped}건 스킵"
+                if report:
+                    self.api.report_run("success", msg)
+                return True, msg
+            error_msg = upload_result.get("error", "업로드 실패")
+            if report:
+                self.api.report_run("failed", error_msg)
+            return False, error_msg
+        finally:
+            try:
+                self.runner.cleanup(excel_path)
+            except OSError as cleanup_error:
+                self.after(0, lambda e=cleanup_error: self._gui_log(f"임시 파일 정리 실패: {e}", "ERROR"))
+
     def _poll_loop(self):
         last_state: dict | None = None
 
@@ -596,24 +617,17 @@ class AgentApp(ctk.CTk):
 
                 # 업로드
                 upload_url = result.get("upload_url", f"{self.cfg['server_url']}/dentweb-upload")
-                upload_result = self.api.upload_file(upload_url, excel_path)
+                ok, msg = self._upload_export(excel_path, upload_url, report=True)
 
-                if upload_result.get("success"):
-                    inserted = upload_result.get("inserted", 0)
-                    skipped = upload_result.get("skipped", 0)
-                    msg = f"{inserted}건 업로드, {skipped}건 스킵"
-                    self.api.report_run("success", msg)
+                if ok:
                     self.after(0, lambda m=msg: self._gui_log(f"완료: {m}"))
                     self.after(0, lambda t=now_str, m=msg: self._update_last_run(
                         t, f"성공 — {m}", EMERALD_600))
                 else:
-                    error_msg = upload_result.get("error", "업로드 실패")
-                    self.api.report_run("failed", error_msg)
-                    self.after(0, lambda e=error_msg: self._gui_log(f"업로드 실패: {e}", "ERROR"))
-                    self.after(0, lambda t=now_str, e=error_msg: self._update_last_run(
+                    self.after(0, lambda e=msg: self._gui_log(f"업로드 실패: {e}", "ERROR"))
+                    self.after(0, lambda t=now_str, e=msg: self._update_last_run(
                         t, f"실패 — {e}", ROSE_500))
 
-                self.runner.cleanup(excel_path)
                 self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
 
             except Exception as e:
@@ -660,40 +674,37 @@ class AgentApp(ctk.CTk):
         self._update_status("실행 중", BLUE_500, "자동화 진행 중...")
 
         def do_run():
-            self.after(0, lambda: self._prepare_for_automation())
-            time.sleep(0.5)
-            self.after(0, lambda: self._gui_log("덴트웹 자동화 시작... (수동)"))
-            excel_path = self.runner.download_excel(
-                log_callback=lambda msg: self.after(0, lambda m=msg: self._gui_log(m))
-            )
-            self.after(0, lambda: self._restore_after_automation())
+            try:
+                self.after(0, lambda: self._prepare_for_automation())
+                time.sleep(0.5)
+                self.after(0, lambda: self._gui_log("덴트웹 자동화 시작... (수동)"))
+                excel_path = self.runner.download_excel(
+                    log_callback=lambda msg: self.after(0, lambda m=msg: self._gui_log(m))
+                )
+                self.after(0, lambda: self._restore_after_automation())
 
-            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-            if not excel_path:
-                self.after(0, lambda: self._gui_log("오늘 수술 기록 없음"))
-                self.after(0, lambda t=now_str: self._update_last_run(t, "데이터 없음", SLATE_500))
+                if not excel_path:
+                    self.after(0, lambda: self._gui_log("오늘 수술 기록 없음"))
+                    self.after(0, lambda t=now_str: self._update_last_run(t, "데이터 없음", SLATE_500))
+                    return
+
+                upload_url = f"{self.cfg['server_url']}/dentweb-upload"
+                ok, msg = self._upload_export(excel_path, upload_url, report=False)
+
+                if ok:
+                    self.after(0, lambda m=msg: self._gui_log(f"완료: {m}"))
+                    self.after(0, lambda t=now_str, m=msg: self._update_last_run(t, f"성공 — {m}", EMERALD_600))
+                else:
+                    self.after(0, lambda e=msg: self._gui_log(f"업로드 실패: {e}", "ERROR"))
+                    self.after(0, lambda t=now_str, e=msg: self._update_last_run(t, f"실패 — {e}", ROSE_500))
+            except Exception as e:
+                self.after(0, lambda: self._restore_after_automation())
+                self.after(0, lambda e=e: self._gui_log(f"에러: {e}", "ERROR"))
+            finally:
                 self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
                 self.after(0, lambda: self._run_now_btn.configure(state="normal", text="▶  지금 실행"))
-                return
-
-            upload_url = f"{self.cfg['server_url']}/dentweb-upload"
-            upload_result = self.api.upload_file(upload_url, excel_path)
-
-            if upload_result.get("success"):
-                inserted = upload_result.get("inserted", 0)
-                skipped = upload_result.get("skipped", 0)
-                msg = f"{inserted}건 업로드, {skipped}건 스킵"
-                self.after(0, lambda m=msg: self._gui_log(f"완료: {m}"))
-                self.after(0, lambda t=now_str, m=msg: self._update_last_run(t, f"성공 — {m}", EMERALD_600))
-            else:
-                error_msg = upload_result.get("error", "업로드 실패")
-                self.after(0, lambda e=error_msg: self._gui_log(f"업로드 실패: {e}", "ERROR"))
-                self.after(0, lambda t=now_str, e=error_msg: self._update_last_run(t, f"실패 — {e}", ROSE_500))
-
-            self.runner.cleanup(excel_path)
-            self.after(0, lambda: self._update_status("서버 연결됨", EMERALD_500, "대기 중"))
-            self.after(0, lambda: self._run_now_btn.configure(state="normal", text="▶  지금 실행"))
 
         threading.Thread(target=do_run, daemon=True).start()
 
